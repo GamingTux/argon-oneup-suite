@@ -1,0 +1,3 @@
+ACTION=="add", SUBSYSTEM=="i2c-dev", KERNEL=="i2c-[0-9]*", RUN+="/usr/local/sbin/argon-backlight-init"
+ACTION=="add", SUBSYSTEM=="i2c", KERNEL=="i2c-[0-9]*", RUN+="/usr/local/sbin/argon-backlight-init"
+KERNEL=="i2c-[0-9]*", MODE="0666"

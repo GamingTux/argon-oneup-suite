@@ -1,0 +1,25 @@
+#!/bin/bash
+set -e
+
+# Set CAP_SYS_ADMIN file capability for namespace helper
+if [ -f /usr/bin/ksystemstats-ns-helper ]; then
+    setcap cap_sys_admin+ep /usr/bin/ksystemstats-ns-helper 2>/dev/null || chmod 4755 /usr/bin/ksystemstats-ns-helper
+    echo "[argon-oneup-sensors] Configured cap_sys_admin on /usr/bin/ksystemstats-ns-helper"
+fi
+
+# Apply cpu_thermal patch to ksystemstats_plugin_cpu.so if present
+if [ -x /usr/sbin/ksystemstats-rpi5-fix ]; then
+    /usr/sbin/ksystemstats-rpi5-fix || true
+fi
+
+# Reload systemd user daemon for active sessions
+for uid_dir in /run/user/[0-9]*; do
+    if [ -d "$uid_dir" ]; then
+        uid=$(basename "$uid_dir")
+        sudo -u "#$uid" XDG_RUNTIME_DIR="$uid_dir" systemctl --user daemon-reload 2>/dev/null || true
+        sudo -u "#$uid" XDG_RUNTIME_DIR="$uid_dir" systemctl --user restart plasma-ksystemstats.service 2>/dev/null || true
+    fi
+done
+
+echo "[argon-oneup-sensors] Hardware sensors and KDE System Monitor integration configured."
+exit 0

@@ -1,0 +1,174 @@
+#!/usr/bin/env python3
+"""
+rpi-pishutdown - Enhanced Raspberry Pi OS Shutdown Dialog with Standby support.
+Drop-in replacement for /usr/bin/pishutdown.
+"""
+
+import os
+import sys
+import subprocess
+import xml.etree.ElementTree as ET
+
+import gi
+gi.require_version("Gtk", "3.0")
+from gi.repository import Gtk, Gdk, GLib, Gio
+
+I18N = {
+    "de": {
+        "title": "Herunterfahroptionen",
+        "standby": "Standby (Ruhezustand)",
+        "shutdown": "Herunterfahren",
+        "reboot": "Neu starten",
+        "logout": "Abmelden",
+        "logout_cli": "Beenden und zur Befehlszeile",
+        "lock": "Drücken Sie '%s' zum Sperren des Bildschirms",
+    },
+    "en": {
+        "title": "Shutdown options",
+        "standby": "Standby (Suspend)",
+        "shutdown": "Shutdown",
+        "reboot": "Reboot",
+        "logout": "Logout",
+        "logout_cli": "Exit to command line",
+        "lock": "Press '%s' to lock screen",
+    }
+}
+
+def get_locale_dict():
+    lang = os.environ.get("LC_ALL") or os.environ.get("LC_MESSAGES") or os.environ.get("LANG") or "en"
+    if lang.lower().startswith("de"):
+        return I18N["de"]
+    return I18N["en"]
+
+def get_lock_shortcut():
+    paths = [
+        os.path.expanduser("~/.config/labwc/rc.xml"),
+        "/etc/xdg/labwc/rc.xml",
+        os.path.expanduser("~/.config/openbox/rc.xml"),
+        "/etc/xdg/openbox/rc.xml",
+    ]
+    for p in paths:
+        if os.path.isfile(p):
+            try:
+                tree = ET.parse(p)
+                root = tree.getroot()
+                for kb in root.findall(".//keybind"):
+                    for act in kb.findall("action"):
+                        cmd = act.attrib.get("command", "") or act.text or ""
+                        if "swaylock" in cmd:
+                            raw = kb.attrib.get("key", "")
+                            # Map standard key names
+                            raw = raw.replace("C-", "Ctrl-").replace("A-", "Alt-").replace("W-", "Super-").replace("S-", "Shift-")
+                            # Convert last letter to uppercase if single letter (e.g. Ctrl-Alt-l -> Ctrl-Alt-L)
+                            parts = raw.split("-")
+                            if parts and len(parts[-1]) == 1:
+                                parts[-1] = parts[-1].upper()
+                            return "-".join(parts)
+            except Exception:
+                pass
+    return "Ctrl-Alt-L"
+
+class PiShutdownWindow(Gtk.Window):
+    def __init__(self):
+        super().__init__(title="Shutdown options")
+        self.t = get_locale_dict()
+
+        self.set_title(self.t["title"])
+        self.set_border_width(10)
+        self.set_default_size(300, -1)
+        self.set_resizable(False)
+        self.set_position(Gtk.WindowPosition.CENTER)
+        self.set_icon_name("system-shutdown")
+
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
+        self.add(box)
+
+        # 1. Standby (calls systemctl suspend -> rpi-fake-sleep)
+        btn_standby = Gtk.Button(label=self.t["standby"])
+        btn_standby.set_can_focus(True)
+        btn_standby.connect("clicked", self.on_standby)
+        box.pack_start(btn_standby, False, True, 0)
+
+        # 2. Shutdown
+        btn_shutdown = Gtk.Button(label=self.t["shutdown"])
+        btn_shutdown.set_can_focus(True)
+        btn_shutdown.connect("clicked", self.on_shutdown)
+        box.pack_start(btn_shutdown, False, True, 0)
+
+        # 3. Reboot
+        btn_reboot = Gtk.Button(label=self.t["reboot"])
+        btn_reboot.set_can_focus(True)
+        btn_reboot.connect("clicked", self.on_reboot)
+        box.pack_start(btn_reboot, False, True, 0)
+
+        # 4. Logout / Exit
+        is_dm_active = subprocess.run("systemctl is-active lightdm 2>/dev/null | grep -qw active", shell=True).returncode == 0
+        logout_label = self.t["logout"] if is_dm_active else self.t["logout_cli"]
+        btn_logout = Gtk.Button(label=logout_label)
+        btn_logout.set_can_focus(True)
+        btn_logout.connect("clicked", self.on_logout)
+        box.pack_start(btn_logout, False, True, 0)
+
+        # 5. Lock shortcut label
+        shortcut = get_lock_shortcut()
+        if shortcut:
+            lbl_lock = Gtk.Label(label=self.t["lock"] % shortcut)
+            lbl_lock.set_margin_top(4)
+            box.pack_start(lbl_lock, False, True, 0)
+
+        self.connect("key-press-event", self.on_key_press)
+        self.connect("destroy", Gtk.main_quit)
+
+    def on_key_press(self, widget, event):
+        if event.keyval == Gdk.KEY_Escape:
+            Gtk.main_quit()
+            return True
+        return False
+
+    def on_standby(self, btn):
+        self.hide()
+        subprocess.Popen(["systemctl", "suspend"])
+        Gtk.main_quit()
+
+    def on_shutdown(self, btn):
+        self.hide()
+        subprocess.run("/usr/bin/pkill orca 2>/dev/null; /sbin/shutdown -h now", shell=True)
+        Gtk.main_quit()
+
+    def on_reboot(self, btn):
+        self.hide()
+        subprocess.run("/usr/bin/pkill orca 2>/dev/null; /sbin/reboot", shell=True)
+        Gtk.main_quit()
+
+    def on_logout(self, btn):
+        self.hide()
+        subprocess.run(
+            "/usr/bin/pkill orca 2>/dev/null; "
+            "if pgrep labwc >/dev/null; then /usr/bin/labwc -e; else /usr/bin/pkill lxsession; fi",
+            shell=True
+        )
+        Gtk.main_quit()
+
+def main():
+    if "--help" in sys.argv or "-h" in sys.argv:
+        print("Usage: rpi-pishutdown")
+        print("Enhanced Raspberry Pi OS Shutdown Dialog with Standby support.")
+        return 0
+
+    # Enforce single instance via D-Bus if available
+    try:
+        app = Gio.Application.new("com.raspberrypi.pishutdown", Gio.ApplicationFlags.FLAGS_NONE)
+        app.register(None)
+        if app.get_is_remote():
+            print("pishutdown is already running.")
+            return 0
+    except Exception:
+        pass
+
+    win = PiShutdownWindow()
+    win.show_all()
+    Gtk.main()
+    return 0
+
+if __name__ == "__main__":
+    sys.exit(main())

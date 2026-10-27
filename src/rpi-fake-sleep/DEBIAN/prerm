@@ -1,0 +1,18 @@
+#!/bin/bash
+set -e
+
+if [ "$1" = "remove" ] || [ "$1" = "deconfigure" ]; then
+    systemctl stop rpi-fake-sleep-enable.service 2>/dev/null || true
+    systemctl disable rpi-fake-sleep-enable.service 2>/dev/null || true
+    umount /sys/power/state 2>/dev/null || true
+
+    # Restore diverted /usr/bin/pishutdown
+    if [ -L /usr/bin/pishutdown ]; then
+        rm -f /usr/bin/pishutdown
+    fi
+    if [ -f /usr/bin/pishutdown.original ]; then
+        dpkg-divert --package rpi-fake-sleep --remove --rename --divert /usr/bin/pishutdown.original /usr/bin/pishutdown 2>/dev/null || true
+    fi
+fi
+
+exit 0

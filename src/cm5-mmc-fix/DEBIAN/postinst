@@ -1,0 +1,31 @@
+#!/bin/bash
+set -e
+
+BOOT_DIR=""
+for d in /boot/firmware /boot; do
+    if [ -d "$d/overlays" ]; then
+        BOOT_DIR="$d"
+        break
+    fi
+done
+
+if [ -n "$BOOT_DIR" ]; then
+    cp -f /usr/share/cm5-mmc-fix/overlays/cm5-sdcard-fast.dtbo "$BOOT_DIR/overlays/cm5-sdcard-fast.dtbo" 2>/dev/null || true
+    echo "[cm5-mmc-fix] Installed cm5-sdcard-fast.dtbo to $BOOT_DIR/overlays/"
+
+    CONFIG="$BOOT_DIR/config.txt"
+    if [ -f "$CONFIG" ]; then
+        if ! grep -q "^[[:space:]]*dtoverlay=cm5-sdcard-fast" "$CONFIG"; then
+            echo "dtoverlay=cm5-sdcard-fast" >> "$CONFIG"
+            echo "[cm5-mmc-fix] Enabled dtoverlay=cm5-sdcard-fast in $CONFIG"
+        fi
+    fi
+fi
+
+# Apply kernel patch to all installed kernels
+if [ -x /usr/bin/cm5-mmc-fix ]; then
+    /usr/bin/cm5-mmc-fix --apply || true
+fi
+
+echo "[cm5-mmc-fix] CM5 Lite empty microSD delay fix installed and active."
+exit 0

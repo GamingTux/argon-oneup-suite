@@ -1,0 +1,98 @@
+# Argon ONE UP Suite
+
+[![Release](https://img.shields.io/github/v/release/GamingTux/argon-oneup-suite?style=flat-square&color=00e5ff)](https://github.com/GamingTux/argon-oneup-suite/releases)
+[![Platform](https://img.shields.io/badge/Platform-Raspberry%20Pi%205%20%2F%20CM5-blue?style=flat-square)](https://www.raspberrypi.com/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
+
+Vollständige Hardware-Treiber-, Energie- und Desktop-Integrations-Suite für das **Argon ONE UP Laptop** (basierend auf dem Raspberry Pi Compute Module 5 / Pi 5).
+
+Diese Suite stellt sicher, dass alle Hardware-Komponenten des Laptops (Akku, Display-Helligkeit, Deckelschalter, Lüfter, Powermanagement und Ruhezustand) „Out-of-the-Box“ unter Standard-Linux-Distributionen (Raspberry Pi OS 64-Bit, Debian, Ubuntu) nahtlos und nach offiziellen Kernel-Standards funktionieren.
+
+---
+
+## 📦 Komponenten der Suite
+
+Die Suite ist modular in **7 eigenständige Debian-Pakete** aufgeteilt. Jedes Paket kann einzeln installiert werden oder zusammen über das Metapaket:
+
+| Paket | Typ | Beschreibung |
+| :--- | :---: | :--- |
+| [**`argon-oneup-battery`**](src/argon-oneup-battery) | `all` | Nativer Linux Kernel `power_supply` Treiber (DKMS) für den Cellwise CW2217 Fuel-Gauge-Chip. Bindet Akku (`BAT0`) und Netzteil (`AC0`) direkt in UPower, KDE Plasma und systemd-logind ein (inkl. dynamischer Restlaufzeitberechnung und Notfall-Shutdown bei kritischem Akkustand). |
+| [**`argon-oneup-backlight`**](src/argon-oneup-backlight) | `all` | Verbindet das interne DDC/CI-Display auf I2C-Bus 14 mit dem Standard Linux `/sys/class/backlight`-Subsystem. Ermöglicht hardwarenahe Helligkeitssteuerung über Funktionstasten, Schieberegler und OSD in allen Desktop-Umgebungen (KDE, Wayfire, Labwc, GNOME). |
+| [**`argon-oneup-lid`**](src/argon-oneup-lid) | `all` | Bindet den physischen Hall-Effekt-Magnetschalter am Displaydeckel auf GPIO 27 via Device Tree Overlay als echten Linux-Input-Switch (`SW_LID` / `EV_SW`) ein. |
+| [**`argon-oneup-sensors`**](src/argon-oneup-sensors) | `arm64` | Leitet alle physischen Hardware-Sensoren (CPU-Temperatur, PWM-Lüfterdrehzahl, NVMe-Temperatur, Akku-Telemetrie) standardkonform über `lm-sensors` weiter. Behebt zudem den KDE Plasma 6 `ksystemstats` ARM64 Deadlock ([KDE Bug #493093](https://bugs.kde.org/show_bug.cgi?id=493093)). |
+| [**`argon-power-profiles`**](src/argon-power-profiles) | `all` | Drop-in Ersatz für den `power-profiles-daemon` auf ARM64/Raspberry Pi. Stellt D-Bus-APIs für KDE/GNOME bereit und regelt dynamisch CPU-Governors (1.5 GHz bis Max), WLAN-Energiesparmodus und Backlight-Profile (*Quiet*, *Balanced*, *Performance*). |
+| [**`cm5-mmc-fix`**](src/cm5-mmc-fix) | `all` | Behebt den 30–80 Sekunden langen Shutdown/Reboot-Hang auf dem Raspberry Pi CM5 Lite bei leerem MicroSD-Slot (BCM2712 SDHCI Hardware-Timeout Bug). |
+| [**`rpi-fake-sleep`**](src/rpi-fake-sleep) | `all` | Universeller Standby/Ruhezustand-Manager für Raspberry Pi. Friert Prozesse über cgroups v2 ein, taktet die CPU herunter, schaltet das Display ab und weckt das System blitzschnell bei Tastendruck oder Deckelöffnen auf. |
+| [**`argon-oneup-suite`**](src/argon-oneup-suite) | `all` | **Metapaket:** Installiert mit einem einzigen Befehl alle oben genannten 7 Pakete als gemeinsame Gesamtsuite. |
+
+---
+
+## 🚀 Installation
+
+Alle Pakete stehen im [**GitHub Release v1.0.0**](https://github.com/GamingTux/argon-oneup-suite/releases) zum Download bereit.
+
+### Option A: Gesamte Suite mit einem Klick (Empfohlen)
+
+Lade das Metapaket `argon-oneup-suite` herunter und installiere es mit `apt`:
+
+```bash
+# 1. Metapaket und Abhängigkeiten herunterladen
+wget https://github.com/GamingTux/argon-oneup-suite/releases/download/v1.0.0/argon-oneup-suite_1.0.0_all.deb
+
+# 2. Installieren (apt löst alle Abhängigkeiten automatisch auf)
+sudo apt update
+sudo apt install ./argon-oneup-suite_1.0.0_all.deb
+```
+
+---
+
+### Option B: Einzelne Pakete nach Bedarf installieren
+
+Wenn du nur bestimmte Funktionen (z. B. nur die Akkuanzeige oder nur die Helligkeitssteuerung) nutzen möchtest:
+
+```bash
+# Beispiel: Nur Akku-Treiber installieren
+wget https://github.com/GamingTux/argon-oneup-suite/releases/download/v1.0.0/argon-oneup-battery_1.0.0_all.deb
+sudo apt install ./argon-oneup-battery_1.0.0_all.deb
+
+# Beispiel: Nur Helligkeits-Treiber installieren
+wget https://github.com/GamingTux/argon-oneup-suite/releases/download/v1.0.0/argon-oneup-backlight_1.0.0_all.deb
+sudo apt install ./argon-oneup-backlight_1.0.0_all.deb
+```
+
+---
+
+### Option C: Offline-Komplettpaket (All-in-One Tarball)
+
+Für Neuinstallationen ohne aktive Internetverbindung:
+
+```bash
+# 1. Komplett-Archiv entpacken
+tar -xzf argon-oneup-suite_1.0.0.tar.gz
+cd argon-oneup-suite-1.0.0
+
+# 2. Automatisches Installationsskript ausführen
+sudo ./install.sh
+```
+
+---
+
+## 🛠️ Aus dem Quellcode bauen
+
+Um alle Debian-Pakete selbst aus dem Quellcode zu erstellen:
+
+```bash
+git clone https://github.com/GamingTux/argon-oneup-suite.git
+cd argon-oneup-suite
+
+# Bauskript ausführen
+./build_packages.sh
+```
+Die fertigen `.deb`-Dateien liegen anschließend im Ordner `dist/`.
+
+---
+
+## 📄 Lizenz
+
+Dieses Projekt steht unter der [MIT Lizenz](LICENSE).  
+Alle Treiber und Overlays sind Open-Source und für die Raspberry Pi Community frei nutzbar.

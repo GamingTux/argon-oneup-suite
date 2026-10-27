@@ -1,0 +1,12 @@
+[Unit]
+Description=Argon ONE UP Backlight Initialization
+After=systemd-modules-load.service local-fs.target
+Before=display-manager.service sddm.service lightdm.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/argon-backlight-init
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

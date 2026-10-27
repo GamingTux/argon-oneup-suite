@@ -1,0 +1,4 @@
+#!/bin/bash
+set -e
+systemctl disable --now argon-backlight.service 2>/dev/null || true
+exit 0

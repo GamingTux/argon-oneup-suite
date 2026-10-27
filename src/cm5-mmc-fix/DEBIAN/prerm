@@ -1,0 +1,9 @@
+#!/bin/bash
+set -e
+
+if [ "$1" = "remove" ] || [ "$1" = "purge" ]; then
+    if [ -x /usr/bin/cm5-mmc-fix ]; then
+        /usr/bin/cm5-mmc-fix --restore 2>/dev/null || true
+    fi
+fi
+exit 0

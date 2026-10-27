@@ -1,0 +1,371 @@
+#!/usr/bin/env python3
+"""
+argon-power-bench - High Precision Power Consumption Benchmark Suite for Argon ONE UP
+Measures real 3S battery discharge over 60s per phase:
+  1. Idle (Desktop, screen 70%, no CPU load)
+  2. Full Load (4x Cortex-A76 @ 2.8 GHz via stress-ng)
+  3. Fake-Sleep (Full 'Lid-Closed' simulation: screen 0 + DPMS off, keyboard USB off, CPU powersave, cgroups frozen)
+"""
+
+import os
+import sys
+import time
+import glob
+import shutil
+import argparse
+import subprocess
+from datetime import datetime
+
+BAT_PATH = "/sys/class/power_supply/BAT0"
+AC_PATH = "/sys/class/power_supply/AC0"
+BL_PATH = "/sys/class/backlight/ddcci14"
+CSV_LOG = "/var/log/argon-power-benchmark.csv"
+REPORT_FILE = "/var/log/argon-power-report.md"
+
+CELLS_IN_SERIES = 3
+PACK_WH = 55.21
+
+def read_file(path, default=None):
+    try:
+        with open(path, "r") as f:
+            return f.read().strip()
+    except Exception:
+        return default
+
+def is_on_ac():
+    return read_file(f"{AC_PATH}/online", "0") == "1"
+
+def get_telemetry():
+    v_raw = read_file(f"{BAT_PATH}/voltage_now")
+    c_raw = read_file(f"{BAT_PATH}/current_now")
+    p_raw = read_file(f"{BAT_PATH}/power_now")
+    t_raw = read_file(f"{BAT_PATH}/temp")
+    soc_raw = read_file(f"{BAT_PATH}/capacity")
+    status = read_file(f"{BAT_PATH}/status", "Unknown")
+
+    v_pack = int(v_raw) / 1e6 if v_raw else 0.0
+    c_ma = int(c_raw) / 1e3 if c_raw else 0.0
+    p_total = int(p_raw) / 1e6 if p_raw else (v_pack * abs(c_ma) / 1000.0)
+    t = int(t_raw) / 10.0 if t_raw else 0.0
+    soc = int(soc_raw) if soc_raw else 0
+
+    v_cell = v_pack / CELLS_IN_SERIES if CELLS_IN_SERIES else v_pack
+    p_cell = p_total / CELLS_IN_SERIES if CELLS_IN_SERIES else p_total
+
+    cpu_freq_raw = read_file("/sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq")
+    cpu_temp_raw = read_file("/sys/class/thermal/thermal_zone0/temp")
+    cpu_mhz = int(cpu_freq_raw) / 1000.0 if cpu_freq_raw else 0.0
+    cpu_temp = int(cpu_temp_raw) / 1000.0 if cpu_temp_raw else 0.0
+
+    return {
+        "timestamp": datetime.now().isoformat(),
+        "epoch": time.time(),
+        "cell_v": v_cell,
+        "pack_v": v_pack,
+        "current_ma": c_ma,
+        "cell_w": p_cell,
+        "total_w": p_total,
+        "temp_c": t,
+        "soc_percent": soc,
+        "status": status,
+        "cpu_mhz": cpu_mhz,
+        "cpu_temp_c": cpu_temp
+    }
+
+def set_dpms(mode):
+    # Wayland KWin DPMS via kscreen-doctor
+    for w in glob.glob("/run/user/*/wayland-0"):
+        try:
+            uid = w.split("/")[3]
+            cmd = ["sudo", "-u", f"#{uid}", "env", f"XDG_RUNTIME_DIR=/run/user/{uid}", "WAYLAND_DISPLAY=wayland-0", "kscreen-doctor", "--dpms", mode.lower()]
+            subprocess.run(cmd, check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except Exception:
+            pass
+    # DRM sysfs fallback
+    for d in glob.glob("/sys/class/drm/card*-*/dpms"):
+        try:
+            with open(d, "w") as f:
+                f.write("Off" if mode.lower() == "off" else "On")
+        except Exception:
+            pass
+
+def set_keyboard_power(enable: bool):
+    val = "0" if enable else "1"
+    for p in glob.glob("/sys/bus/usb/devices/1-1:1.0/1-1-port[67]/disable"):
+        try:
+            with open(p, "w") as f:
+                f.write(val)
+        except Exception:
+            pass
+
+def set_cgroups_frozen(freeze: bool):
+    val = "1" if freeze else "0"
+    for uid_dir in glob.glob("/sys/fs/cgroup/user.slice/user-*.slice/user@*.service/app.slice"):
+        freeze_path = os.path.join(uid_dir, "cgroup.freeze")
+        if os.path.exists(freeze_path):
+            try:
+                with open(freeze_path, "w") as f:
+                    f.write(val)
+            except Exception:
+                pass
+
+def set_wifi_power_save(enable: bool):
+    for iw in ["/usr/sbin/iw", "/usr/bin/iw", "iw"]:
+        try:
+            subprocess.run([iw, "dev", "wlan0", "set", "power_save", "on" if enable else "off"],
+                           check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            break
+        except Exception:
+            pass
+
+def set_bluetooth_power(enable: bool):
+    for rf in ["/usr/sbin/rfkill", "/usr/bin/rfkill", "rfkill"]:
+        try:
+            action = "unblock" if enable else "block"
+            subprocess.run([rf, action, "bluetooth"],
+                           check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            break
+        except Exception:
+            pass
+
+def set_audio_autosuspend():
+    for p in glob.glob("/sys/bus/usb/drivers/snd-usb-audio/*:*/../power/control"):
+        try:
+            with open(p, "w") as f:
+                f.write("auto")
+        except Exception:
+            pass
+
+def sample_period(name, duration_sec, interval=1.0):
+    print(f"\n[*] Starte Messung: {name} ({duration_sec} Sekunden)...")
+    samples = []
+    start = time.time()
+
+    while (time.time() - start) < duration_sec:
+        data = get_telemetry()
+        data["phase"] = name
+        samples.append(data)
+        elapsed = int(time.time() - start)
+
+        print(f"  [{name:<8}] {elapsed:2d}/{duration_sec:2d}s: "
+              f"Gesamt-P: {data['total_w']:5.2f}W (Zelle: {data['cell_w']:.2f}W) | "
+              f"I: {data['current_ma']:7.1f}mA | U_pack: {data['pack_v']:.2f}V | "
+              f"CPU: {data['cpu_mhz']:4.0f}MHz ({data['cpu_temp_c']:.1f}°C)   ", end="\r", flush=True)
+
+        time.sleep(interval)
+
+    print()
+    return samples
+
+def compute_stats(samples):
+    if not samples:
+        return {}
+
+    tot_powers = [s["total_w"] for s in samples]
+    cell_powers = [s["cell_w"] for s in samples]
+    currents = [s["current_ma"] for s in samples]
+    pack_volts = [s["pack_v"] for s in samples]
+    temps = [s["temp_c"] for s in samples]
+    cpu_temps = [s["cpu_temp_c"] for s in samples]
+    cpu_mhz = [s["cpu_mhz"] for s in samples]
+
+    avg_p_tot = sum(tot_powers) / len(tot_powers)
+    avg_p_cell = sum(cell_powers) / len(cell_powers)
+    avg_c = sum(currents) / len(currents)
+
+    est_hours = (PACK_WH / avg_p_tot) if avg_p_tot > 0.1 else 999.0
+
+    return {
+        "count": len(samples),
+        "min_w": min(tot_powers),
+        "max_w": max(tot_powers),
+        "avg_w": avg_p_tot,
+        "avg_cell_w": avg_p_cell,
+        "min_ma": min(currents),
+        "max_ma": max(currents),
+        "avg_ma": avg_c,
+        "avg_v": sum(pack_volts) / len(pack_volts),
+        "avg_temp_c": sum(temps) / len(temps),
+        "avg_cpu_temp_c": sum(cpu_temps) / len(cpu_temps),
+        "avg_cpu_mhz": sum(cpu_mhz) / len(cpu_mhz),
+        "est_battery_hours": est_hours
+    }
+
+def run_benchmark(duration=60):
+    if os.geteuid() != 0:
+        print("[!] Bitte mit 'sudo argon-power-bench' ausführen.")
+        sys.exit(1)
+
+    print("=" * 76)
+    print("      ARGON ONE UP - POWER CONSUMPTION BENCHMARK SUITE (60s TEST)")
+    print(f"      Hardware: Raspberry Pi CM5 (BCM2712, 4 Kerne @ bis zu 2.8 GHz)")
+    print(f"      Akku-Typ: 3S1P Li-Po Pack ({PACK_WH} Wh, Nennspannung 11.5 V)")
+    print(f"      Zeitstempel: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print("=" * 76)
+
+    # Check AC power
+    if is_on_ac():
+        print("\n[!] WICHTIGER HINWEIS: Das 42W-Ladekabel ist aktuell angeschlossen!")
+        print("    Um den echten Akkuverbrauch des Laptops zu ermitteln,")
+        print("    muss der Laptop auf Akkubetrieb laufen.")
+        print("[*] Warte darauf, dass das Ladekabel abgezogen wird (Strg+C zum Abbrechen)...")
+        while is_on_ac():
+            time.sleep(1)
+        print("\n[+] Ladekabel getrennt! Starte Benchmark in 3 Sekunden...")
+        time.sleep(3)
+
+    initial = get_telemetry()
+    print(f"\n[+] Akku-Startzustand: {initial['soc_percent']}% "
+          f"(Pack: {initial['pack_v']:.2f}V, Einzelzelle: {initial['cell_v']:.3f}V, {initial['status']})")
+
+    all_samples = []
+
+    # -------------------------------------------------------------
+    # PHASE 1: LEERLAUF (IDLE) - 60 SEKUNDEN
+    # -------------------------------------------------------------
+    print("\n--- PHASE 1: LEERLAUF (IDLE) ---")
+    print("Bedingungen: Desktop aktiv, Display 70% Helligkeit, keine aktive Rechenlast.")
+    time.sleep(2)
+    idle_samples = sample_period("Idle", duration)
+    all_samples.extend(idle_samples)
+    idle_stats = compute_stats(idle_samples)
+
+    # -------------------------------------------------------------
+    # PHASE 2: VOLLLAST (CPU 100% - 4 KERNE @ 2.8 GHz) - 60 SEKUNDEN
+    # -------------------------------------------------------------
+    print("\n--- PHASE 2: VOLLLAST (CPU 100% - 4 KERNE @ 2.8 GHz) ---")
+    print("Starte 4-Kern stress-ng (Matrix-Multiplikation + RAM-Stress)...")
+
+    # Ensure ondemand governor
+    for g in glob.glob("/sys/devices/system/cpu/cpu*/cpufreq/scaling_governor"):
+        try:
+            with open(g, "w") as f: f.write("ondemand")
+        except Exception: pass
+
+    stress_proc = subprocess.Popen(
+        ["stress-ng", "--cpu", "4", "--cpu-method", "matrixprod", "--vm", "2", "--vm-bytes", "512M", "--timeout", f"{duration+6}s"],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+    )
+
+    time.sleep(3) # Ramp-up to 2.8 GHz
+    load_samples = sample_period("FullLoad", duration)
+    all_samples.extend(load_samples)
+    load_stats = compute_stats(load_samples)
+
+    if stress_proc:
+        try:
+            stress_proc.terminate()
+            stress_proc.wait(timeout=2)
+        except Exception:
+            pass
+        subprocess.run("pkill -9 -f stress-ng 2>/dev/null", shell=True)
+    print("Volllast-Phase abgeschlossen, CPU kühlt ab...")
+    time.sleep(3)
+
+    # -------------------------------------------------------------
+    # PHASE 3: FAKE-SLEEP (DECKEL-ZU SIMULATION) - 60 SEKUNDEN
+    # -------------------------------------------------------------
+    print("\n--- PHASE 3: FAKE-SLEEP ('DECKEL ZU' SIMULATION) ---")
+    print("Schalte Display komplett aus (Helligkeit 0 + DPMS Off),")
+    print("schalte Tastatur/Touchpad-USB-Ports stromlos (LEDs aus),")
+    print("drossle CPU auf Powersave (1.5 GHz), friere User-Apps ein,")
+    print("aktiviere WLAN-Power-Save, blockiere Bluetooth & aktiviere Audio-Autosuspend...")
+
+    orig_brightness = read_file(f"{BL_PATH}/brightness", "70")
+
+    try:
+        # 1. Blank display & DPMS
+        if os.path.isfile(f"{BL_PATH}/brightness"):
+            with open(f"{BL_PATH}/brightness", "w") as f:
+                f.write("0")
+        set_dpms("off")
+
+        # 2. Power off keyboard USB hub ports
+        set_keyboard_power(enable=False)
+
+        # 3. CPU Powersave
+        for g in glob.glob("/sys/devices/system/cpu/cpu*/cpufreq/scaling_governor"):
+            try:
+                with open(g, "w") as f: f.write("powersave")
+            except Exception: pass
+
+        # 4. Freeze user app cgroups
+        set_cgroups_frozen(freeze=True)
+
+        # 5. Radio & Audio power savings
+        set_wifi_power_save(True)
+        set_bluetooth_power(False)
+        set_audio_autosuspend()
+
+        time.sleep(3) # Wait for complete settling
+        sleep_samples = sample_period("FakeSleep", duration)
+        all_samples.extend(sleep_samples)
+        sleep_stats = compute_stats(sleep_samples)
+
+    finally:
+        print("Wecke System auf: Stelle Display, Tastaturlicht, CPU-Takt, Funk & Apps wieder her...")
+        set_bluetooth_power(True)
+        set_wifi_power_save(False)
+        set_cgroups_frozen(freeze=False)
+        set_keyboard_power(enable=True)
+        set_dpms("on")
+        if os.path.isfile(f"{BL_PATH}/brightness"):
+            with open(f"{BL_PATH}/brightness", "w") as f:
+                f.write(orig_brightness)
+        for g in glob.glob("/sys/devices/system/cpu/cpu*/cpufreq/scaling_governor"):
+            try:
+                with open(g, "w") as f: f.write("ondemand")
+            except Exception: pass
+
+    # -------------------------------------------------------------
+    # AUSWERTUNG & BERICHT
+    # -------------------------------------------------------------
+    report = generate_report(idle_stats, load_stats, sleep_stats)
+    print("\n" + report)
+    save_results(all_samples, report)
+
+def generate_report(idle, load, sleep):
+    lines = []
+    lines.append("=" * 86)
+    lines.append(f"{'ZUSTAND':<15} | {'GESAMTLEISTUNG (3S)':<19} | {'ZELL-LEISTUNG':<13} | {'Ø STROM':<11} | {'EST. LAUFZEIT':<14}")
+    lines.append("-" * 86)
+
+    lines.append(f"{'Leerlauf (Idle)':<15} | {idle['avg_w']:6.2f} W ({idle['min_w']:.1f}..{idle['max_w']:.1f}W) | {idle['avg_cell_w']:5.2f} W      | {idle['avg_ma']:7.1f} mA | ca. {idle['est_battery_hours']:.1f} Std.")
+    lines.append(f"{'Volllast (Load)':<15} | {load['avg_w']:6.2f} W ({load['min_w']:.1f}..{load['max_w']:.1f}W) | {load['avg_cell_w']:5.2f} W      | {load['avg_ma']:7.1f} mA | ca. {load['est_battery_hours']:.1f} Std.")
+    lines.append(f"{'Fake-Sleep':<15} | {sleep['avg_w']:6.2f} W ({sleep['min_w']:.1f}..{sleep['max_w']:.1f}W) | {sleep['avg_cell_w']:5.2f} W      | {sleep['avg_ma']:7.1f} mA | ca. {sleep['est_battery_hours']:.1f} Std.")
+    lines.append("=" * 86)
+
+    diff_w = idle['avg_w'] - sleep['avg_w']
+    pct = (diff_w / idle['avg_w']) * 100.0 if idle['avg_w'] > 0 else 0.0
+    lines.append(f"-> Echte Gesamtersparnis im Standby: {diff_w:.2f} W ({pct:.1f}% weniger Verbrauch gegenüber Idle)")
+    lines.append(f"-> Akkuverbrauch im Fake-Sleep:       ca. {abs(sleep['avg_ma']):.0f} mAh/h ({abs(sleep['avg_ma'])/48.0:.1f} %/h)")
+    lines.append(f"-> Reale Standby-Dauer:              ca. {sleep['est_battery_hours']:.1f} Stunden bis zur vollständigen Entladung")
+    return "\n".join(lines)
+
+def save_results(samples, report_text):
+    file_exists = os.path.isfile(CSV_LOG)
+    with open(CSV_LOG, "a") as f:
+        if not file_exists:
+            f.write("timestamp,epoch,phase,cell_v,pack_v,current_ma,cell_w,total_w,temp_c,soc_percent,cpu_mhz,cpu_temp_c\n")
+        for s in samples:
+            f.write(f"{s['timestamp']},{s['epoch']:.2f},{s['phase']},{s['cell_v']:.3f},{s['pack_v']:.2f},{s['current_ma']:.1f},"
+                    f"{s['cell_w']:.2f},{s['total_w']:.2f},{s['temp_c']:.1f},{s['soc_percent']},{s['cpu_mhz']:.0f},{s['cpu_temp_c']:.1f}\n")
+
+    with open(REPORT_FILE, "w") as f:
+        f.write("# Argon ONE UP Power Benchmark Report\n\n")
+        f.write(f"Erstellt am: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+        f.write("```\n")
+        f.write(report_text)
+        f.write("\n```\n")
+
+    print(f"\n[+] Rohdaten gespeichert in: {CSV_LOG}")
+    print(f"[+] Bericht gespeichert in:  {REPORT_FILE}")
+
+def main():
+    parser = argparse.ArgumentParser(description="Argon ONE UP Power Benchmarking & Standby Logger")
+    parser.add_argument("--duration", type=int, default=60, help="Dauer pro Phase in Sekunden (Standard: 60s)")
+    args = parser.parse_args()
+    run_benchmark(args.duration)
+
+if __name__ == "__main__":
+    main()

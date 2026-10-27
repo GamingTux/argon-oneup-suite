@@ -1,0 +1,33 @@
+#!/bin/bash
+# Argon ONE UP DDC/CI Backlight Binder
+# Bridges internal HDMI-A-2 display on I2C-14 to /sys/class/backlight/
+
+modprobe i2c-dev 2>/dev/null || true
+modprobe ddcci 2>/dev/null || true
+modprobe ddcci-backlight 2>/dev/null || true
+
+sleep 0.2
+
+BUS_NUM=""
+for conn in /sys/class/drm/card*-HDMI-A-*/ddc; do
+    [ -e "$conn" ] || continue
+    STATUS_FILE="$(dirname "$conn")/status"
+    if [ -f "$STATUS_FILE" ] && [ "$(cat "$STATUS_FILE" 2>/dev/null)" = "connected" ]; then
+        REAL=$(readlink -f "$conn" 2>/dev/null)
+        NUM=$(echo "$REAL" | grep -o -E '[0-9]+$')
+        if [ -n "$NUM" ]; then
+            BUS_NUM="$NUM"
+            break
+        fi
+    fi
+done
+
+[ -z "$BUS_NUM" ] && [ -e /dev/i2c-14 ] && BUS_NUM=14
+
+if [ -n "$BUS_NUM" ]; then
+    DEV_PATH="/sys/bus/i2c/devices/i2c-${BUS_NUM}"
+    if [ -d "$DEV_PATH" ] && [ ! -e "${DEV_PATH}/${BUS_NUM}-0037" ]; then
+        echo ddcci 0x37 > "${DEV_PATH}/new_device" 2>/dev/null || true
+        logger -t argon-backlight-init "Attached ddcci 0x37 to i2c-${BUS_NUM} -> /sys/class/backlight created"
+    fi
+fi

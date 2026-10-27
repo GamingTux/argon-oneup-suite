@@ -1,0 +1,23 @@
+#!/bin/bash
+set -e
+
+rm -f /etc/systemd/sleep.conf.d/nosuspend.conf 2>/dev/null || true
+systemctl daemon-reload 2>/dev/null || true
+systemctl enable rpi-fake-sleep-enable.service 2>/dev/null || true
+systemctl start rpi-fake-sleep-enable.service 2>/dev/null || true
+
+# Signal logind to reload configuration
+systemctl try-reload-or-restart systemd-logind.service 2>/dev/null || true
+
+# Safe Debian diversion for /usr/bin/pishutdown
+if [ "$1" = "configure" ]; then
+    if [ -f /usr/bin/pishutdown ] && [ ! -L /usr/bin/pishutdown ]; then
+        dpkg-divert --package rpi-fake-sleep --add --rename --divert /usr/bin/pishutdown.original /usr/bin/pishutdown
+    fi
+    if [ -f /usr/bin/pishutdown.original ] || [ -f /usr/bin/pishutdown ]; then
+        ln -sf /usr/bin/rpi-pishutdown /usr/bin/pishutdown
+    fi
+fi
+
+echo "[rpi-fake-sleep] Raspberry Pi userspace suspend handler installed successfully."
+exit 0

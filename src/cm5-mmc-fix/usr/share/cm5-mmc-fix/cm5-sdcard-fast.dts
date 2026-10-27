@@ -1,0 +1,14 @@
+/dts-v1/;
+/plugin/;
+
+/ {
+    compatible = "brcm,bcm2712";
+
+    fragment@0 {
+        target = <&sdio1>;
+        __overlay__ {
+            no-sdio;
+            no-mmc;
+        };
+    };
+};

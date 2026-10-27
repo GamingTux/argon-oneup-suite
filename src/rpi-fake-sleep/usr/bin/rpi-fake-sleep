@@ -1,0 +1,501 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-or-later
+"""
+rpi-fake-sleep — Universal Userspace Standby / Suspend Handler for Raspberry Pi
+Provides clean, reliable sleep & wake on Raspberry Pi systems where the kernel
+lacks ACPI S3 or stable s2idle.
+Uses cgroups v2 app freezing, CPU throttling, display blanking, dynamic battery
+loss protection, and instant wake-up via standard Linux input events.
+"""
+
+import os
+import sys
+import glob
+import time
+import signal
+import select
+import struct
+import fcntl
+import subprocess
+
+CONF_FILE = "/etc/rpi-fake-sleep.conf"
+
+EVIOCGSW_4 = 0x8004451b
+EVIOCGNAME_256 = (2 << 30) | (256 << 16) | (ord('E') << 8) | 0x06
+
+EVENT_FORMAT = "llHHi"
+EVENT_SIZE = struct.calcsize(EVENT_FORMAT)
+
+def load_config():
+    """Loads configuration with sane defaults."""
+    cfg = {
+        "MAX_BATTERY_LOSS_PERCENT": 10,
+        "DISABLE_KEYBOARD_WHEN_CLOSED": True,
+        "SUSPEND_WIFI_POWERSAVE": True,
+        "SUSPEND_BLUETOOTH_BLOCK": True,
+        "ENABLE_AUDIO_AUTOSUSPEND": True,
+    }
+    if os.path.isfile(CONF_FILE):
+        try:
+            with open(CONF_FILE, "r") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith("#"):
+                        continue
+                    if "=" in line:
+                        k, v = line.split("=", 1)
+                        k, v = k.strip(), v.strip()
+                        if k == "MAX_BATTERY_LOSS_PERCENT":
+                            cfg[k] = int(v)
+                        elif k in ("DISABLE_KEYBOARD_WHEN_CLOSED", "SUSPEND_WIFI_POWERSAVE", "SUSPEND_BLUETOOTH_BLOCK", "ENABLE_AUDIO_AUTOSUSPEND"):
+                            cfg[k] = v.lower() in ("true", "1", "yes")
+        except Exception:
+            pass
+    return cfg
+
+def log(msg):
+    try:
+        subprocess.run(["logger", "-t", "rpi-fake-sleep", msg], check=False)
+    except Exception:
+        pass
+
+def get_lid_state():
+    """Returns 'closed', 'open', or 'none' if no lid switch exists."""
+    for dev in sorted(glob.glob("/dev/input/event*")):
+        try:
+            fd = os.open(dev, os.O_RDONLY | os.O_NONBLOCK)
+            buf = bytearray(256)
+            fcntl.ioctl(fd, EVIOCGNAME_256, buf)
+            name = buf.split(b'\x00')[0].decode('utf-8', errors='ignore')
+            if "lid" in name.lower():
+                sw = bytearray(4)
+                fcntl.ioctl(fd, EVIOCGSW_4, sw)
+                os.close(fd)
+                return "closed" if (sw[0] & 1) else "open"
+            os.close(fd)
+        except Exception:
+            try:
+                os.close(fd)
+            except Exception:
+                pass
+    return "none"
+
+def read_battery_soc():
+    """Reads current battery capacity in percent, or None if no battery exists."""
+    for p in glob.glob("/sys/class/power_supply/BAT*/capacity"):
+        try:
+            with open(p, "r") as f:
+                return int(f.read().strip())
+        except Exception:
+            pass
+    return None
+
+def is_on_ac():
+    """Returns True if mains/AC charger is connected."""
+    for p in glob.glob("/sys/class/power_supply/AC*/online") + glob.glob("/sys/class/power_supply/mains/online"):
+        try:
+            with open(p, "r") as f:
+                if f.read().strip() == "1":
+                    return True
+        except Exception:
+            pass
+    return False
+
+def set_keyboard_backlight_power(enable: bool):
+    """
+    Toggles power on the Argon ONE UP internal keyboard USB ports.
+    Safely guarded: Exits immediately if no lid switch exists (Desktop Pi).
+    """
+    if get_lid_state() == "none":
+        return
+
+    for p in glob.glob("/sys/bus/usb/devices/1-1:1.0/1-1-port[67]/disable"):
+        try:
+            with open(p, "w") as f:
+                f.write("0" if enable else "1")
+        except Exception:
+            pass
+
+def set_wifi_power_save(enable: bool):
+    """Toggles 802.11 power saving on wlan0."""
+    for iw in ["/usr/sbin/iw", "/usr/bin/iw", "iw"]:
+        try:
+            subprocess.run([iw, "dev", "wlan0", "set", "power_save", "on" if enable else "off"],
+                           check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            break
+        except Exception:
+            pass
+
+def get_bluetooth_blocked():
+    """Checks if bluetooth is currently soft-blocked."""
+    for rf in ["/usr/sbin/rfkill", "/usr/bin/rfkill", "rfkill"]:
+        try:
+            res = subprocess.run([rf, "list", "bluetooth"], capture_output=True, text=True, check=False)
+            if res.returncode == 0:
+                return "soft blocked: yes" in res.stdout.lower()
+        except Exception:
+            pass
+    return False
+
+def set_bluetooth_power(enable: bool):
+    """Enables or soft-blocks bluetooth."""
+    for rf in ["/usr/sbin/rfkill", "/usr/bin/rfkill", "rfkill"]:
+        try:
+            action = "unblock" if enable else "block"
+            subprocess.run([rf, action, "bluetooth"],
+                           check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            break
+        except Exception:
+            pass
+
+def set_audio_autosuspend():
+    """Enables autosuspend on USB audio interfaces."""
+    for p in glob.glob("/sys/bus/usb/drivers/snd-usb-audio/*:*/../power/control"):
+        try:
+            with open(p, "w") as f:
+                f.write("auto")
+        except Exception:
+            pass
+
+def lock_sessions():
+    """Triggers standard desktop screen locking."""
+    try:
+        subprocess.run(["loginctl", "lock-sessions"], check=False)
+    except Exception:
+        pass
+    for bus in glob.glob("/run/user/*/bus"):
+        try:
+            uid = bus.split("/")[3]
+            subprocess.run(
+                ["sudo", "-u", f"#{uid}", "env", f"DBUS_SESSION_BUS_ADDRESS=unix:path={bus}",
+                 "qdbus6", "org.freedesktop.ScreenSaver", "/ScreenSaver", "Lock"],
+                check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+            )
+        except Exception:
+            pass
+
+def mute_audio():
+    try:
+        subprocess.run(["amixer", "set", "Master", "mute"], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception:
+        pass
+    for pw in glob.glob("/run/user/*/pipewire-0"):
+        try:
+            uid = pw.split("/")[3]
+            subprocess.run(
+                ["sudo", "-u", f"#{uid}", "env", f"XDG_RUNTIME_DIR=/run/user/{uid}",
+                 "wpctl", "set-mute", "@DEFAULT_AUDIO_SINK@", "1"],
+                check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+            )
+        except Exception:
+            pass
+
+def unmute_audio():
+    for pw in glob.glob("/run/user/*/pipewire-0"):
+        try:
+            uid = pw.split("/")[3]
+            subprocess.run(
+                ["sudo", "-u", f"#{uid}", "env", f"XDG_RUNTIME_DIR=/run/user/{uid}",
+                 "wpctl", "set-mute", "@DEFAULT_AUDIO_SINK@", "0"],
+                check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+            )
+        except Exception:
+            pass
+    try:
+        subprocess.run(["amixer", "set", "Master", "unmute"], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception:
+        pass
+
+def blank_displays():
+    """Saves current brightness and blanks all backlight and DRM displays."""
+    saved_brightness = {}
+    for bl in glob.glob("/sys/class/backlight/*"):
+        b_file = os.path.join(bl, "brightness")
+        if os.path.isfile(b_file):
+            try:
+                with open(b_file, "r") as f:
+                    val = int(f.read().strip())
+                saved_brightness[b_file] = val
+                with open(b_file, "w") as f:
+                    f.write("0")
+            except Exception:
+                pass
+
+    for dpms in glob.glob("/sys/class/drm/card*-*/dpms"):
+        try:
+            with open(dpms, "w") as f:
+                f.write("Off")
+        except Exception:
+            pass
+
+    # Wayland KWin DPMS via kscreen-doctor
+    for w in glob.glob("/run/user/*/wayland-0"):
+        try:
+            uid = w.split("/")[3]
+            cmd = ["sudo", "-u", f"#{uid}", "env", f"XDG_RUNTIME_DIR=/run/user/{uid}", "WAYLAND_DISPLAY=wayland-0", "kscreen-doctor", "--dpms", "off"]
+            subprocess.run(cmd, check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except Exception:
+            pass
+
+    return saved_brightness
+
+def restore_displays(saved_brightness):
+    """Restores DRM DPMS and backlight brightness."""
+    # Wayland KWin DPMS via kscreen-doctor
+    for w in glob.glob("/run/user/*/wayland-0"):
+        try:
+            uid = w.split("/")[3]
+            cmd = ["sudo", "-u", f"#{uid}", "env", f"XDG_RUNTIME_DIR=/run/user/{uid}", "WAYLAND_DISPLAY=wayland-0", "kscreen-doctor", "--dpms", "on"]
+            subprocess.run(cmd, check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except Exception:
+            pass
+
+    for dpms in glob.glob("/sys/class/drm/card*-*/dpms"):
+        try:
+            with open(dpms, "w") as f:
+                f.write("On")
+        except Exception:
+            pass
+
+    for b_file, val in saved_brightness.items():
+        if os.path.isfile(b_file):
+            try:
+                with open(b_file, "w") as f:
+                    f.write(str(val if val > 0 else 50))
+            except Exception:
+                pass
+
+def apply_power_saving():
+    """Freezes user applications and throttles CPU to minimum power."""
+    # 1. Freeze cgroups v2 user apps
+    for uid_dir in glob.glob("/sys/fs/cgroup/user.slice/user-*.slice/user@*.service/app.slice"):
+        freeze_path = os.path.join(uid_dir, "cgroup.freeze")
+        if os.path.exists(freeze_path):
+            try:
+                with open(freeze_path, "w") as f:
+                    f.write("1")
+            except Exception:
+                pass
+
+    # 2. Throttle CPU governor to powersave and minimum clock
+    saved_governors = {}
+    for cpu in glob.glob("/sys/devices/system/cpu/cpu[0-9]*/cpufreq"):
+        gov_path = os.path.join(cpu, "scaling_governor")
+        min_path = os.path.join(cpu, "cpuinfo_min_freq")
+        max_path = os.path.join(cpu, "scaling_max_freq")
+        if os.path.isfile(gov_path):
+            try:
+                with open(gov_path, "r") as f:
+                    saved_governors[gov_path] = f.read().strip()
+                with open(min_path, "r") as f:
+                    min_freq = f.read().strip()
+                with open(max_path, "w") as f:
+                    f.write(min_freq)
+                with open(gov_path, "w") as f:
+                    f.write("powersave")
+            except Exception:
+                pass
+
+    return saved_governors
+
+def restore_power(saved_governors):
+    """Unfreezes applications and restores normal CPU clock."""
+    # 1. Unfreeze cgroups v2 user apps
+    for uid_dir in glob.glob("/sys/fs/cgroup/user.slice/user-*.slice/user@*.service/app.slice"):
+        freeze_path = os.path.join(uid_dir, "cgroup.freeze")
+        if os.path.exists(freeze_path):
+            try:
+                with open(freeze_path, "w") as f:
+                    f.write("0")
+            except Exception:
+                pass
+
+    # 2. Restore CPU clock and governors
+    for cpu in glob.glob("/sys/devices/system/cpu/cpu[0-9]*/cpufreq"):
+        gov_path = os.path.join(cpu, "scaling_governor")
+        max_path = os.path.join(cpu, "scaling_max_freq")
+        maxinfo_path = os.path.join(cpu, "cpuinfo_max_freq")
+        try:
+            if os.path.isfile(maxinfo_path):
+                with open(maxinfo_path, "r") as f:
+                    top_freq = f.read().strip()
+                with open(max_path, "w") as f:
+                    f.write(top_freq)
+            gov = saved_governors.get(gov_path, "schedutil")
+            with open(gov_path, "w") as f:
+                f.write(gov)
+        except Exception:
+            pass
+
+def sig_handler(signum, frame):
+    raise KeyboardInterrupt()
+
+def print_status():
+    cfg = load_config()
+    print("=== rpi-fake-sleep status ===")
+    print(f"Lid State:         {get_lid_state()}")
+    print(f"Battery SOC:       {read_battery_soc()}%")
+    print(f"On AC Power:       {is_on_ac()}")
+    print(f"Lid Auto-Shutdown: {cfg.get('LID_AUTO_SHUTDOWN_HOURS', 4)} hours")
+    print(f"Max Battery Drain: {cfg.get('MAX_BATTERY_DRAIN_PERCENT', 10)}%")
+    print(f"Backlight devices: {glob.glob('/sys/class/backlight/*')}")
+    print(f"DRM DPMS devices:  {glob.glob('/sys/class/drm/card*-*/dpms')}")
+    print("=============================")
+
+def main():
+    if len(sys.argv) > 1:
+        arg = sys.argv[1].lower()
+        if arg in ("--help", "-h", "help"):
+            print("Usage: rpi-fake-sleep [suspend|status|--help]")
+            print("Universal Userspace Sleep & Standby Manager for Raspberry Pi.")
+            sys.exit(0)
+        elif arg == "status":
+            print_status()
+            sys.exit(0)
+
+    signal.signal(signal.SIGTERM, sig_handler)
+    signal.signal(signal.SIGINT, sig_handler)
+
+    cfg = load_config()
+    initial_lid = get_lid_state()
+    lid_was_closed = (initial_lid == "closed")
+    initial_soc = read_battery_soc()
+    on_ac_init = is_on_ac()
+
+    log(f"Entering sleep (lid: {initial_lid}, battery: {initial_soc}%, AC: {on_ac_init})")
+
+    saved_bt_blocked = get_bluetooth_blocked()
+
+    # 1. Lock screen
+    lock_sessions()
+
+    # 2. Mute sound
+    mute_audio()
+
+    # 3. Blank displays
+    saved_brightness = blank_displays()
+
+    # 4. Freeze apps & throttle CPU
+    saved_governors = apply_power_saving()
+
+    # 5. Radio & Audio power savings
+    if cfg.get("ENABLE_AUDIO_AUTOSUSPEND", True):
+        set_audio_autosuspend()
+    if cfg.get("SUSPEND_WIFI_POWERSAVE", True):
+        set_wifi_power_save(True)
+    if cfg.get("SUSPEND_BLUETOOTH_BLOCK", True) and not saved_bt_blocked:
+        set_bluetooth_power(False)
+
+    # 6. Turn off keyboard backlight if lid is closed (prevents heat against LCD)
+    if lid_was_closed and cfg["DISABLE_KEYBOARD_WHEN_CLOSED"]:
+        set_keyboard_backlight_power(enable=False)
+
+    # 6. Open input devices and wait via epoll (0% CPU)
+    epoll = select.epoll()
+    open_fds = []
+
+    for dev in glob.glob("/dev/input/event*"):
+        try:
+            fd = os.open(dev, os.O_RDONLY | os.O_NONBLOCK)
+            epoll.register(fd, select.EPOLLIN)
+            open_fds.append(fd)
+        except Exception:
+            pass
+
+    last_battery_check = time.time()
+
+    try:
+        while True:
+            # Poll every 1.0s for instant responsiveness
+            events = epoll.poll(timeout=1.0)
+
+            # Check if lid state transitioned to open (fast 1s poll check)
+            if lid_was_closed and get_lid_state() == "open":
+                log("Lid opened (poll check) -> waking up")
+                break
+
+            # Periodic check for battery loss while closed on battery (every 30s)
+            now = time.time()
+            if (now - last_battery_check) >= 30.0:
+                last_battery_check = now
+
+                # Dynamic battery loss protection (only when closed on battery)
+                if lid_was_closed and not is_on_ac():
+                    max_loss = cfg["MAX_BATTERY_LOSS_PERCENT"]
+                    if max_loss > 0 and initial_soc is not None:
+                        curr_soc = read_battery_soc()
+                        if curr_soc is not None:
+                            loss = initial_soc - curr_soc
+                            if loss >= max_loss:
+                                log(f"Standby battery loss reached {loss}% (limit {max_loss}%): powering off cleanly")
+                                subprocess.run(["systemctl", "poweroff"], check=False)
+                                break
+
+            if not events:
+                continue
+
+            wake = False
+            for fd, event in events:
+                try:
+                    data = os.read(fd, EVENT_SIZE * 16)
+                    for i in range(0, len(data), EVENT_SIZE):
+                        chunk = data[i:i+EVENT_SIZE]
+                        if len(chunk) < EVENT_SIZE:
+                            continue
+                        sec, usec, ev_type, ev_code, ev_val = struct.unpack(EVENT_FORMAT, chunk)
+
+                        # EV_SW (5), SW_LID (0) -> 0 = OPEN
+                        if ev_type == 5 and ev_code == 0:
+                            if ev_val == 0:
+                                log("Lid opened -> waking up")
+                                wake = True
+                                break
+                            elif ev_val == 1:
+                                lid_was_closed = True
+                                if cfg["DISABLE_KEYBOARD_WHEN_CLOSED"]:
+                                    set_keyboard_backlight_power(enable=False)
+
+                        # EV_KEY (1) -> 1 = key down
+                        elif ev_type == 1 and ev_val == 1:
+                            log(f"Key press detected (code {ev_code}) -> waking up")
+                            wake = True
+                            break
+
+                        # Mouse / Touchpad (EV_REL=2, EV_ABS=3) only wakes if lid was open
+                        elif ev_type in (2, 3) and not lid_was_closed:
+                            log("Pointer motion detected -> waking up")
+                            wake = True
+                            break
+                except Exception:
+                    pass
+
+            if wake:
+                break
+    except KeyboardInterrupt:
+        log("Sleep interrupted by signal -> waking up")
+    finally:
+        for fd in open_fds:
+            try:
+                epoll.unregister(fd)
+                os.close(fd)
+            except Exception:
+                pass
+        epoll.close()
+
+        # Always re-enable keyboard power on resume
+        set_keyboard_backlight_power(enable=True)
+
+        # Restore system state
+        if cfg.get("SUSPEND_BLUETOOTH_BLOCK", True) and not saved_bt_blocked:
+            set_bluetooth_power(True)
+        if cfg.get("SUSPEND_WIFI_POWERSAVE", True):
+            set_wifi_power_save(False)
+        restore_power(saved_governors)
+        restore_displays(saved_brightness)
+        unmute_audio()
+        log("Wakeup complete, normal power & display restored")
+
+    sys.exit(0)
+
+if __name__ == "__main__":
+    main()

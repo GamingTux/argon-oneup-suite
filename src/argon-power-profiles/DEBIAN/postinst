@@ -1,0 +1,22 @@
+#!/bin/bash
+set -e
+
+# Stop and mask the generic upstream power-profiles-daemon if present
+if systemctl list-unit-files power-profiles-daemon.service >/dev/null 2>&1; then
+    systemctl stop power-profiles-daemon.service 2>/dev/null || true
+    systemctl disable power-profiles-daemon.service 2>/dev/null || true
+    systemctl mask power-profiles-daemon.service 2>/dev/null || true
+fi
+
+# Ensure state directory exists
+mkdir -p /var/lib/argon-power-profiles
+chmod 755 /var/lib/argon-power-profiles
+
+# Reload systemd and enable/restart our service
+systemctl daemon-reload 2>/dev/null || true
+systemctl unmask argon-power-profiles.service 2>/dev/null || true
+systemctl enable argon-power-profiles.service 2>/dev/null || true
+systemctl restart argon-power-profiles.service 2>/dev/null || true
+
+echo "[argon-power-profiles] Power profiles daemon installed and active."
+exit 0

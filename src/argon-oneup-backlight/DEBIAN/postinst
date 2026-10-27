@@ -1,0 +1,25 @@
+#!/bin/bash
+set -e
+
+CONFIG=""
+for f in /boot/firmware/config.txt /boot/config.txt; do
+    if [ -f "$f" ]; then
+        CONFIG="$f"
+        break
+    fi
+done
+
+if [ -n "$CONFIG" ]; then
+    if ! grep -q "^[[:space:]]*dtparam=i2c_arm=on" "$CONFIG"; then
+        echo "dtparam=i2c_arm=on" >> "$CONFIG"
+        echo "[argon-oneup-backlight] Added dtparam=i2c_arm=on to $CONFIG"
+    fi
+fi
+
+systemctl daemon-reload 2>/dev/null || true
+systemctl enable argon-backlight.service 2>/dev/null || true
+udevadm control --reload-rules 2>/dev/null || true
+/usr/local/sbin/argon-backlight-init 2>/dev/null || true
+
+echo "[argon-oneup-backlight] Backlight driver installed and initialized successfully!"
+exit 0

@@ -1,0 +1,20 @@
+Package: argon-power-profiles
+Version: 1.0.0
+Architecture: all
+Maintainer: Playx <playx@argon-oneup.local>
+Section: admin
+Priority: optional
+Homepage: https://github.com/argon40tech/argon-oneup
+Depends: python3, python3-dbus, python3-gi, iw, systemd
+Provides: power-profiles-daemon, rpi-power-profiles
+Conflicts: power-profiles-daemon
+Replaces: power-profiles-daemon
+Description: Hardware Power Profiles Daemon for Raspberry Pi & Argon ONE UP
+ Drop-in replacement for power-profiles-daemon on ARM64 and Raspberry Pi devices
+ where ACPI platform drivers are absent.
+ Exports standard org.freedesktop.UPower.PowerProfiles and net.hadess.PowerProfiles
+ D-Bus APIs for KDE Plasma, GNOME, and powerprofilesctl.
+ Dynamically manages:
+  - CPU Governors (powersave @ 1500MHz, ondemand dynamic, performance @ max freq)
+  - WiFi Power Saving (powersave on / off)
+  - Display Backlight with per-profile memory and automatic restore

@@ -1,0 +1,16 @@
+Package: argon-oneup-battery
+Version: 1.0.0
+Architecture: all
+Maintainer: Playx <playx@argon-oneup.local>
+Section: hardware
+Priority: optional
+Homepage: https://github.com/argon40tech/argon-oneup
+Depends: dkms, device-tree-compiler, i2c-tools
+Recommends: linux-headers-rpi-2712 | linux-headers-raspi | linux-headers-arm64 | linux-headers-rpi-v8 | linux-headers-generic, lm-sensors
+Description: Argon ONE UP Laptop Battery & Power Management Driver
+ Native Linux kernel power_supply driver for the Cellwise CW2217
+ fuel gauge IC on the Argon ONE UP Raspberry Pi CM5 laptop.
+ Exposes BAT0 (percentage, voltage, real current, temperature,
+ dynamic battery runtime) and AC0 (online status) to the desktop
+ environment (KDE Plasma, UPower, systemd-logind).
+ Includes DKMS automatic build, Device Tree overlay, and config.txt auto-configuration.

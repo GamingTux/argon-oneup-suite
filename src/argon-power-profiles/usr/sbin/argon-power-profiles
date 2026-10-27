@@ -1,0 +1,290 @@
+#!/usr/bin/env python3
+import sys, os, glob, json, time, subprocess
+import dbus
+import dbus.service
+import dbus.mainloop.glib
+from gi.repository import GLib
+
+BUS_NAME_UPOWER = "org.freedesktop.UPower.PowerProfiles"
+BUS_NAME_HADESS = "net.hadess.PowerProfiles"
+OBJECT_PATH_UPOWER = "/org/freedesktop/UPower/PowerProfiles"
+OBJECT_PATH_HADESS = "/net/hadess/PowerProfiles"
+INTERFACE_UPOWER = "org.freedesktop.UPower.PowerProfiles"
+INTERFACE_HADESS = "net.hadess.PowerProfiles"
+INTERFACE_PROPS = "org.freedesktop.DBus.Properties"
+
+CONFIG_FILE = "/var/lib/argon-power-profiles/config.json"
+LEGACY_STATE_FILE = "/var/lib/argon-power-profiles/state"
+
+DEFAULT_CONFIG = {
+    "active_profile": "balanced",
+    "brightness": {
+        "power-saver": 35,
+        "balanced": 70,
+        "performance": 90
+    }
+}
+
+GOVERNOR_MAP = {
+    "power-saver": "powersave",
+    "balanced": "ondemand",
+    "performance": "performance"
+}
+
+def apply_governor(profile):
+    gov = GOVERNOR_MAP.get(profile, "ondemand")
+    for f in glob.glob("/sys/devices/system/cpu/cpu*/cpufreq/scaling_governor"):
+        try:
+            with open(f, "w") as fp:
+                fp.write(gov)
+        except OSError:
+            pass
+    print(f"[power-profiles] Governor set to '{gov}' for profile '{profile}'")
+
+def apply_wifi_powersave(profile):
+    enable = (profile == "power-saver")
+    mode = "on" if enable else "off"
+    interfaces = []
+    try:
+        out = subprocess.check_output(["/usr/sbin/iw", "dev"], text=True)
+        for line in out.splitlines():
+            line = line.strip()
+            if line.startswith("Interface "):
+                interfaces.append(line.split()[1])
+    except Exception:
+        pass
+    if not interfaces:
+        interfaces = ["wlan0"]
+    for iface in interfaces:
+        try:
+            subprocess.run(["/usr/sbin/iw", "dev", iface, "set", "power_save", mode],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+        except Exception:
+            pass
+    print(f"[power-profiles] WiFi power saving set to '{mode}' for profile '{profile}'")
+
+def set_brightness(val):
+    val = max(5, min(100, int(val)))
+    for bl in glob.glob("/sys/class/backlight/*"):
+        try:
+            with open(f"{bl}/brightness", "w") as fp:
+                fp.write(str(val))
+        except OSError:
+            pass
+    for bus_path in glob.glob("/run/user/*/bus"):
+        try:
+            bus = dbus.bus.BusConnection(f"unix:path={bus_path}")
+            obj = bus.get_object("org.kde.Solid.PowerManagement", "/org/kde/Solid/PowerManagement/Actions/BrightnessControl")
+            iface = dbus.Interface(obj, "org.kde.Solid.PowerManagement.Actions.BrightnessControl")
+            max_b = int(iface.brightnessMax())
+            target = int(round((val / 100.0) * max_b))
+            iface.setBrightnessSilent(target)
+        except Exception:
+            pass
+    print(f"[power-profiles] Brightness set to {val}%")
+
+def read_current_brightness():
+    for bl in glob.glob("/sys/class/backlight/*"):
+        try:
+            with open(f"{bl}/bl_power", "r") as fp:
+                if int(fp.read().strip()) != 0:
+                    return None
+        except OSError:
+            pass
+        try:
+            with open(f"{bl}/brightness", "r") as fp:
+                return int(fp.read().strip())
+        except OSError:
+            pass
+    return None
+
+class ProfileManager:
+    def __init__(self):
+        self.config = {
+            "active_profile": DEFAULT_CONFIG["active_profile"],
+            "brightness": dict(DEFAULT_CONFIG["brightness"])
+        }
+        self.load_config()
+        self.services = []
+        self.holds = []
+        self.cookie_counter = 1
+        self.ignore_brightness_until = time.time() + 3.0
+
+    def load_config(self):
+        if os.path.isfile(LEGACY_STATE_FILE) and not os.path.isfile(CONFIG_FILE):
+            try:
+                with open(LEGACY_STATE_FILE, "r") as f:
+                    p = f.read().strip()
+                    if p in GOVERNOR_MAP:
+                        self.config["active_profile"] = p
+            except OSError:
+                pass
+
+        if os.path.isfile(CONFIG_FILE):
+            try:
+                with open(CONFIG_FILE, "r") as f:
+                    data = json.load(f)
+                    if isinstance(data, dict):
+                        if data.get("active_profile") in GOVERNOR_MAP:
+                            self.config["active_profile"] = data["active_profile"]
+                        if "brightness" in data and isinstance(data["brightness"], dict):
+                            for k, v in data["brightness"].items():
+                                if k in GOVERNOR_MAP and isinstance(v, (int, float)):
+                                    self.config["brightness"][k] = max(5, min(100, int(v)))
+            except Exception as e:
+                print(f"[power-profiles] Config read error: {e}")
+
+    def save_config(self):
+        try:
+            os.makedirs(os.path.dirname(CONFIG_FILE), exist_ok=True)
+            temp_file = CONFIG_FILE + ".tmp"
+            with open(temp_file, "w") as f:
+                json.dump(self.config, f, indent=2)
+            os.replace(temp_file, CONFIG_FILE)
+        except OSError as e:
+            print(f"[power-profiles] Failed to save config: {e}")
+
+    @property
+    def active_profile(self):
+        return self.config["active_profile"]
+
+    def set_active_profile(self, profile):
+        if profile not in GOVERNOR_MAP:
+            return
+
+        self.config["active_profile"] = profile
+        self.save_config()
+
+        apply_governor(profile)
+        apply_wifi_powersave(profile)
+
+        target_b = self.config["brightness"].get(profile, 70)
+        set_brightness(target_b)
+        self.ignore_brightness_until = time.time() + 2.5
+
+        changed = dbus.Dictionary({
+            dbus.String("ActiveProfile"): dbus.String(profile, variant_level=1)
+        }, signature=dbus.Signature("sv"))
+        for srv in self.services:
+            srv.PropertiesChanged(srv.interface_name, changed, dbus.Array([], signature=dbus.Signature("s")))
+
+    def check_brightness(self):
+        now = time.time()
+        if now < self.ignore_brightness_until:
+            return True
+
+        cur = read_current_brightness()
+        if cur is not None and cur >= 5:
+            stored = self.config["brightness"].get(self.active_profile, 70)
+            if cur != stored:
+                print(f"[power-profiles] User changed brightness to {cur}% (profile '{self.active_profile}' updated from {stored}%)")
+                self.config["brightness"][self.active_profile] = cur
+                self.save_config()
+
+        return True
+
+class PowerProfilesService(dbus.service.Object):
+    def __init__(self, bus, path, interface_name, manager):
+        super().__init__(bus, path)
+        self.bus = bus
+        self.interface_name = interface_name
+        self.manager = manager
+        self.manager.services.append(self)
+
+    def get_all_properties(self, interface_name):
+        profiles_list = dbus.Array([
+            dbus.Dictionary({
+                dbus.String("Profile"): dbus.String("power-saver", variant_level=1),
+                dbus.String("Driver"): dbus.String("cpufreq", variant_level=1),
+                dbus.String("PlatformDriver"): dbus.String("argon-oneup", variant_level=1)
+            }, signature=dbus.Signature("sv")),
+            dbus.Dictionary({
+                dbus.String("Profile"): dbus.String("balanced", variant_level=1),
+                dbus.String("Driver"): dbus.String("cpufreq", variant_level=1),
+                dbus.String("PlatformDriver"): dbus.String("argon-oneup", variant_level=1)
+            }, signature=dbus.Signature("sv")),
+            dbus.Dictionary({
+                dbus.String("Profile"): dbus.String("performance", variant_level=1),
+                dbus.String("Driver"): dbus.String("cpufreq", variant_level=1),
+                dbus.String("PlatformDriver"): dbus.String("argon-oneup", variant_level=1)
+            }, signature=dbus.Signature("sv"))
+        ], signature=dbus.Signature("a{sv}"))
+
+        props = {
+            dbus.String("ActiveProfile"): dbus.String(self.manager.active_profile, variant_level=1),
+            dbus.String("PerformanceInhibited"): dbus.String("", variant_level=1),
+            dbus.String("PerformanceDegraded"): dbus.String("", variant_level=1),
+            dbus.String("Profiles"): profiles_list,
+            dbus.String("Actions"): dbus.Array([], signature=dbus.Signature("s")),
+            dbus.String("ActionsInfo"): dbus.Array([], signature=dbus.Signature("a{sv}")),
+            dbus.String("ActiveProfileHolds"): dbus.Array(self.manager.holds, signature=dbus.Signature("a{sv}")),
+            dbus.String("Version"): dbus.String("0.30", variant_level=1),
+            dbus.String("BatteryAware"): dbus.Boolean(True, variant_level=1)
+        }
+        return dbus.Dictionary(props, signature=dbus.Signature("sv"))
+
+    @dbus.service.method(INTERFACE_PROPS, in_signature="ss", out_signature="v")
+    def Get(self, interface_name, property_name):
+        props = self.get_all_properties(interface_name)
+        if property_name in props:
+            return props[property_name]
+        raise dbus.exceptions.DBusException(f"Property {property_name} not found")
+
+    @dbus.service.method(INTERFACE_PROPS, in_signature="s", out_signature="a{sv}")
+    def GetAll(self, interface_name):
+        return self.get_all_properties(interface_name)
+
+    @dbus.service.method(INTERFACE_PROPS, in_signature="ssv")
+    def Set(self, interface_name, property_name, new_value):
+        if property_name == "ActiveProfile":
+            val = str(new_value)
+            if val in GOVERNOR_MAP:
+                self.manager.set_active_profile(val)
+                return
+            raise dbus.exceptions.DBusException(f"Invalid profile {val}")
+        raise dbus.exceptions.DBusException(f"Property {property_name} is read-only")
+
+    @dbus.service.signal(INTERFACE_PROPS, signature="sa{sv}as")
+    def PropertiesChanged(self, interface_name, changed_properties, invalidated_properties):
+        pass
+
+    @dbus.service.method(INTERFACE_UPOWER, in_signature="sss", out_signature="u")
+    def HoldProfile(self, profile, reason, application_id):
+        cookie = self.manager.cookie_counter
+        self.manager.cookie_counter += 1
+        hold = dbus.Dictionary({
+            dbus.String("Profile"): dbus.String(profile, variant_level=1),
+            dbus.String("Reason"): dbus.String(reason, variant_level=1),
+            dbus.String("ApplicationId"): dbus.String(application_id, variant_level=1),
+            dbus.String("Cookie"): dbus.UInt32(cookie, variant_level=1)
+        }, signature=dbus.Signature("sv"))
+        self.manager.holds.append(hold)
+        return cookie
+
+    @dbus.service.method(INTERFACE_UPOWER, in_signature="u")
+    def ReleaseProfile(self, cookie):
+        self.manager.holds = [h for h in self.manager.holds if h.get(dbus.String("Cookie")) != cookie]
+        self.ProfileReleased(cookie)
+
+    @dbus.service.signal(INTERFACE_UPOWER, signature="u")
+    def ProfileReleased(self, cookie):
+        pass
+
+if __name__ == "__main__":
+    dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
+    bus = dbus.SystemBus()
+    manager = ProfileManager()
+
+    srv1 = PowerProfilesService(bus, OBJECT_PATH_UPOWER, INTERFACE_UPOWER, manager)
+    srv2 = PowerProfilesService(bus, OBJECT_PATH_HADESS, INTERFACE_HADESS, manager)
+
+    bus.request_name(BUS_NAME_UPOWER)
+    bus.request_name(BUS_NAME_HADESS)
+
+    manager.set_active_profile(manager.active_profile)
+
+    GLib.timeout_add_seconds(2, manager.check_brightness)
+
+    print("Started Argon ONE UP PowerProfiles Daemon (with Brightness Memory & WiFi Control)!")
+    loop = GLib.MainLoop()
+    loop.run()

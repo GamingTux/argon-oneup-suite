@@ -1,0 +1,58 @@
+#!/bin/bash
+set -e
+
+BOOT_DIR=""
+for d in /boot/firmware /boot; do
+    if [ -d "$d/overlays" ] || [ -f "$d/config.txt" ]; then
+        BOOT_DIR="$d"
+        break
+    fi
+done
+
+if [ -n "$BOOT_DIR" ]; then
+    mkdir -p "$BOOT_DIR/overlays"
+    cp -f /usr/share/argon-oneup/overlays/argon-oneup-battery.dtbo "$BOOT_DIR/overlays/argon-oneup-battery.dtbo" 2>/dev/null || true
+    echo "[argon-oneup-battery] Installed argon-oneup-battery.dtbo to $BOOT_DIR/overlays/"
+
+    CONFIG="$BOOT_DIR/config.txt"
+    if [ -f "$CONFIG" ]; then
+        if ! grep -q "^[[:space:]]*dtparam=i2c_arm=on" "$CONFIG"; then
+            echo "dtparam=i2c_arm=on" >> "$CONFIG"
+            echo "[argon-oneup-battery] Enabled dtparam=i2c_arm=on in $CONFIG"
+        fi
+        if ! grep -q "^[[:space:]]*dtoverlay=argon-oneup-battery" "$CONFIG"; then
+            echo "dtoverlay=argon-oneup-battery" >> "$CONFIG"
+            echo "[argon-oneup-battery] Enabled dtoverlay=argon-oneup-battery in $CONFIG"
+        fi
+    fi
+fi
+
+# DKMS registration and build
+DKMS_VER="1.0"
+if command -v dkms >/dev/null 2>&1; then
+    if dkms status -m oneUpPower -v "$DKMS_VER" 2>/dev/null | grep -q oneUpPower; then
+        echo "[argon-oneup-battery] Removing existing DKMS registration for oneUpPower/$DKMS_VER..."
+        dkms remove -m oneUpPower -v "$DKMS_VER" --all 2>/dev/null || true
+    fi
+    echo "[argon-oneup-battery] Registering oneUpPower/$DKMS_VER with DKMS..."
+    dkms add -m oneUpPower -v "$DKMS_VER" 2>/dev/null || true
+    echo "[argon-oneup-battery] Building oneUpPower/$DKMS_VER for current kernel..."
+    dkms build -m oneUpPower -v "$DKMS_VER" 2>/dev/null || true
+    echo "[argon-oneup-battery] Installing oneUpPower/$DKMS_VER module..."
+    dkms install -m oneUpPower -v "$DKMS_VER" 2>/dev/null || true
+fi
+
+# Load i2c-dev if available
+modprobe i2c-dev 2>/dev/null || true
+
+# Try loading the module immediately
+modprobe oneUpPower 2>/dev/null || true
+
+# Trigger I2C device probe if not already probed by Device Tree
+if [ ! -e /sys/bus/i2c/devices/1-0064 ] && [ -d /sys/bus/i2c/devices/i2c-1 ]; then
+    echo "oneup-battery 0x64" > /sys/bus/i2c/devices/i2c-1/new_device 2>/dev/null || true
+    echo "[argon-oneup-battery] Triggered I2C probe for CW2217 at address 0x64"
+fi
+
+echo "[argon-oneup-battery] Battery driver and power supply integration installed successfully."
+exit 0

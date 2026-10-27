@@ -1,0 +1,16 @@
+#!/bin/bash
+set -e
+
+if [ "$1" = "purge" ] || [ "$1" = "remove" ]; then
+    for d in /boot/firmware /boot; do
+        rm -f "$d/overlays/argon-oneup-battery.dtbo" 2>/dev/null || true
+        if [ -f "$d/config.txt" ]; then
+            sed -i '/^[[:space:]]*dtoverlay=argon-oneup-battery/d' "$d/config.txt" 2>/dev/null || true
+            echo "[argon-oneup-battery] Removed dtoverlay=argon-oneup-battery from $d/config.txt"
+        fi
+    done
+
+    rm -rf /var/lib/dkms/oneUpPower
+fi
+
+exit 0

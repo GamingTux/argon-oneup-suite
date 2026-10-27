@@ -1,0 +1,40 @@
+/dts-v1/;
+/plugin/;
+
+/ {
+    compatible = "brcm,bcm2712";
+
+    fragment@0 {
+        target = <&rp1_gpio>;
+        __overlay__ {
+            lid_switch_pins: lid_switch_pins {
+                pins = "gpio27";
+                function = "gpio";
+                bias-pull-up;
+                input-enable;
+                input-schmitt-enable;
+            };
+        };
+    };
+
+    fragment@1 {
+        target-path = "/";
+        __overlay__ {
+            lid_switch {
+                pinctrl-names = "default";
+                pinctrl-0 = <&lid_switch_pins>;
+                compatible = "gpio-keys";
+                status = "okay";
+
+                lid {
+                    label = "lid_switch";
+                    linux,input-type = <0x05>;   /* EV_SW */
+                    linux,code = <0x00>;         /* SW_LID */
+                    debounce-interval = <0x32>;  /* 50 ms */
+                    gpios = <&rp1_gpio 27 1>;    /* 1 = GPIO_ACTIVE_LOW */
+                    wakeup-source;
+                };
+            };
+        };
+    };
+};

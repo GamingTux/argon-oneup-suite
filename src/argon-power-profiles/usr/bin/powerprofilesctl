@@ -1,0 +1,60 @@
+#!/usr/bin/env python3
+import sys
+import dbus
+
+BUS_NAME = "org.freedesktop.UPower.PowerProfiles"
+OBJ_PATH = "/org/freedesktop/UPower/PowerProfiles"
+IFACE = "org.freedesktop.UPower.PowerProfiles"
+PROPS_IFACE = "org.freedesktop.DBus.Properties"
+
+def get_proxy():
+    bus = dbus.SystemBus()
+    obj = bus.get_object(BUS_NAME, OBJ_PATH)
+    return dbus.Interface(obj, PROPS_IFACE)
+
+def main():
+    args = sys.argv[1:]
+    cmd = args[0] if args else "list"
+
+    try:
+        props = get_proxy()
+    except Exception as e:
+        sys.exit(f"Failed to connect to power-profiles daemon: {e}")
+
+    if cmd == "get":
+        print(props.Get(IFACE, "ActiveProfile"))
+    elif cmd == "set":
+        if len(args) < 2:
+            sys.exit("Usage: powerprofilesctl set <profile>")
+        try:
+            props.Set(IFACE, "ActiveProfile", args[1])
+        except dbus.exceptions.DBusException as e:
+            sys.exit(f"Failed to set profile: {e.get_dbus_message()}")
+    elif cmd in ("list", "status"):
+        active = str(props.Get(IFACE, "ActiveProfile"))
+        profiles = props.Get(IFACE, "Profiles")
+        for p in profiles:
+            prof_name = str(p.get("Profile", ""))
+            driver = str(p.get("Driver", ""))
+            plat = str(p.get("PlatformDriver", ""))
+            marker = "*" if prof_name == active else " "
+            print(f"{marker} {prof_name}:")
+            if driver:
+                print(f"    Driver:          {driver}")
+            if plat:
+                print(f"    Platform Driver: {plat}")
+            print()
+    elif cmd == "version":
+        print(props.Get(IFACE, "Version"))
+    elif cmd == "help" or cmd == "--help" or cmd == "-h":
+        print("Usage: powerprofilesctl [COMMAND]")
+        print("\nCommands:")
+        print("  list           List available power profiles (default)")
+        print("  get            Print active power profile")
+        print("  set <PROFILE>  Switch to power profile (power-saver, balanced, performance)")
+        print("  version        Print daemon version")
+    else:
+        sys.exit(f"Unknown command: '{cmd}'. Use 'powerprofilesctl help' for usage.")
+
+if __name__ == "__main__":
+    main()

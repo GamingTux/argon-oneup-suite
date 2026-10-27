@@ -1,0 +1,202 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-or-later
+"""
+cm5-mmc-fix — Fixes the 30-80s shutdown/reboot hang on Raspberry Pi CM5 Lite
+when the microSD card slot is empty.
+Patches mmc_rescan freqs[] table in kernel images to bypass the 100kHz BCM2712
+hardware timeout bug while keeping full microSD card hotplugging and booting.
+"""
+
+import os
+import sys
+import glob
+import gzip
+import shutil
+import struct
+import tempfile
+import argparse
+
+OLD_FREQS = struct.pack("<IIII", 400000, 300000, 200000, 100000)
+NEW_FREQS = struct.pack("<IIII", 400000, 400000, 400000, 400000)
+
+def find_kernels():
+    paths = set(glob.glob("/boot/firmware/kernel*.img") +
+                glob.glob("/boot/kernel*.img") +
+                glob.glob("/boot/vmlinuz*"))
+    return sorted([p for p in paths if os.path.isfile(p) and not os.path.islink(p)])
+
+def read_kernel_raw(path):
+    try:
+        with gzip.open(path, "rb") as f:
+            return f.read(), True
+    except Exception:
+        pass
+    try:
+        with open(path, "rb") as f:
+            return f.read(), False
+    except Exception:
+        return None, False
+
+def write_kernel_raw(path, data, is_gzipped):
+    dir_name = os.path.dirname(path)
+    fd, tmp = tempfile.mkstemp(dir=dir_name, prefix=".kpatch-")
+    os.close(fd)
+    try:
+        if is_gzipped:
+            with gzip.open(tmp, "wb", compresslevel=6) as f:
+                f.write(data)
+        else:
+            with open(tmp, "wb") as f:
+                f.write(data)
+        shutil.copymode(path, tmp)
+        os.replace(tmp, path)
+        return True
+    except Exception as e:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+        print(f"Error writing {path}: {e}", file=sys.stderr)
+        return False
+
+def patch_kernel(path):
+    data, is_gz = read_kernel_raw(path)
+    if data is None:
+        return "READ_ERROR"
+    if NEW_FREQS in data:
+        return "ALREADY_PATCHED"
+    if OLD_FREQS in data:
+        patched = data.replace(OLD_FREQS, NEW_FREQS, 1)
+        if write_kernel_raw(path, patched, is_gz):
+            return "PATCHED"
+        return "WRITE_ERROR"
+    return "PATTERN_NOT_FOUND"
+
+def restore_kernel(path):
+    data, is_gz = read_kernel_raw(path)
+    if data is None:
+        return "READ_ERROR"
+    if OLD_FREQS in data:
+        return "ALREADY_ORIGINAL"
+    if NEW_FREQS in data:
+        restored = data.replace(NEW_FREQS, OLD_FREQS, 1)
+        if write_kernel_raw(path, restored, is_gz):
+            return "RESTORED"
+        return "WRITE_ERROR"
+    return "PATTERN_NOT_FOUND"
+
+def get_kernel_status(path):
+    data, _ = read_kernel_raw(path)
+    if data is None:
+        return "READ_ERROR"
+    if NEW_FREQS in data:
+        return "PATCHED"
+    if OLD_FREQS in data:
+        return "UNPATCHED"
+    return "UNKNOWN"
+
+def check_overlay_status():
+    dt_nodes = glob.glob("/proc/device-tree/soc@*/mmc@fff000") + glob.glob("/proc/device-tree/axi/mmc@*")
+    no_sdio = False
+    no_mmc = False
+    broken_cd = False
+    for n in dt_nodes:
+        if os.path.exists(os.path.join(n, "broken-cd")):
+            broken_cd = True
+        if os.path.exists(os.path.join(n, "no-sdio")):
+            no_sdio = True
+        if os.path.exists(os.path.join(n, "no-mmc")):
+            no_mmc = True
+
+    config_active = False
+    for cfg in ["/boot/firmware/config.txt", "/boot/config.txt"]:
+        if os.path.isfile(cfg):
+            try:
+                with open(cfg, "r") as f:
+                    for line in f:
+                        if line.strip().startswith("dtoverlay=cm5-sdcard-fast"):
+                            config_active = True
+                            break
+            except Exception:
+                pass
+
+    return {
+        "broken_cd": broken_cd,
+        "config_active": config_active,
+        "live_overlay_active": (no_sdio and no_mmc)
+    }
+
+def print_status():
+    print("=== CM5 Lite MicroSD Slot Optimization Status ===")
+    ov = check_overlay_status()
+    print(f"Hardware broken-cd:      {'Yes (CM5 Lite detected)' if ov['broken_cd'] else 'No'}")
+    print(f"config.txt dtoverlay:    {'Active (dtoverlay=cm5-sdcard-fast)' if ov['config_active'] else 'Not found'}")
+    print(f"Live device tree:        {'Active (no-sdio, no-mmc loaded)' if ov['live_overlay_active'] else 'Standard'}")
+    print("\nKernel Image Status:")
+    kernels = find_kernels()
+    if not kernels:
+        print("  No Raspberry Pi kernel images found in /boot.")
+    for k in kernels:
+        stat = get_kernel_status(k)
+        indicator = "[ OK ]" if stat == "PATCHED" else ("[WARN]" if stat == "UNPATCHED" else "[????]")
+        print(f"  {indicator} {k}: {stat}")
+    print("==================================================")
+
+def apply_all():
+    kernels = find_kernels()
+    success = True
+    for k in kernels:
+        res = patch_kernel(k)
+        if res == "PATCHED":
+            print(f"[cm5-mmc-fix] Patched mmc_rescan freqs[] in {k}")
+        elif res == "ALREADY_PATCHED":
+            print(f"[cm5-mmc-fix] Already patched: {k}")
+        elif res == "PATTERN_NOT_FOUND":
+            print(f"[cm5-mmc-fix] Warning: mmc_rescan pattern not found in {k}")
+        else:
+            print(f"[cm5-mmc-fix] Error patching {k}: {res}")
+            success = False
+    return success
+
+def restore_all():
+    kernels = find_kernels()
+    success = True
+    for k in kernels:
+        res = restore_kernel(k)
+        if res == "RESTORED":
+            print(f"[cm5-mmc-fix] Restored original mmc_rescan freqs[] in {k}")
+        elif res == "ALREADY_ORIGINAL":
+            print(f"[cm5-mmc-fix] Already original: {k}")
+        elif res == "PATTERN_NOT_FOUND":
+            print(f"[cm5-mmc-fix] Warning: mmc_rescan pattern not found in {k}")
+        else:
+            print(f"[cm5-mmc-fix] Error restoring {k}: {res}")
+            success = False
+    return success
+
+def main():
+    parser = argparse.ArgumentParser(description="CM5 Lite MicroSD Slot Shutdown Delay Fixer")
+    parser.add_argument("action", nargs="?", default="status", choices=["status", "apply", "patch", "restore", "unpatch"],
+                        help="Action to perform (default: status)")
+    parser.add_argument("--apply", action="store_true", help="Apply patch to all kernels")
+    parser.add_argument("--restore", action="store_true", help="Restore all kernels to original")
+    parser.add_argument("--kernel-hook", action="store_true", help="Run as kernel postinst hook")
+
+    args, unknown = parser.parse_known_args()
+
+    if args.kernel_hook or args.apply or args.action in ("apply", "patch"):
+        if os.geteuid() != 0:
+            print("Error: Root privileges required to patch kernel images.", file=sys.stderr)
+            sys.exit(1)
+        ok = apply_all()
+        sys.exit(0 if ok else 1)
+    elif args.restore or args.action in ("restore", "unpatch"):
+        if os.geteuid() != 0:
+            print("Error: Root privileges required to restore kernel images.", file=sys.stderr)
+            sys.exit(1)
+        ok = restore_all()
+        sys.exit(0 if ok else 1)
+    else:
+        print_status()
+        sys.exit(0)
+
+if __name__ == "__main__":
+    main()

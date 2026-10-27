@@ -1,0 +1,19 @@
+#!/bin/bash
+set -e
+
+if [ "$1" = "remove" ] || [ "$1" = "deconfigure" ]; then
+    # Detach I2C device if manually instantiated
+    if [ -e /sys/bus/i2c/devices/1-0064 ] && [ -w /sys/bus/i2c/devices/i2c-1/delete_device ]; then
+        echo 0x64 > /sys/bus/i2c/devices/i2c-1/delete_device 2>/dev/null || true
+    fi
+
+    # Unload module
+    modprobe -r oneUpPower 2>/dev/null || true
+
+    # Remove DKMS module
+    if command -v dkms >/dev/null 2>&1; then
+        dkms remove -m oneUpPower -v "1.0" --all 2>/dev/null || true
+    fi
+fi
+
+exit 0

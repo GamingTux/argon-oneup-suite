@@ -1,0 +1,36 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-or-later
+"""
+ksystemstats-rpi5-fix — Patches ksystemstats_plugin_cpu.so to map cpu_thermal on Raspberry Pi 5.
+"""
+import os, struct, sys
+
+root = sys.argv[1] if len(sys.argv) > 1 and os.path.isdir(sys.argv[1]) else ""
+
+cpu_path = os.path.join(root, "usr/lib/aarch64-linux-gnu/qt6/plugins/ksystemstats/ksystemstats_plugin_cpu.so") if root else "/usr/lib/aarch64-linux-gnu/qt6/plugins/ksystemstats/ksystemstats_plugin_cpu.so"
+if os.path.isfile(cpu_path):
+    try:
+        with open(cpu_path, "rb") as f:
+            data = bytearray(f.read())
+        changed = False
+        if data[0x11a80:0x11a87] == b"Serial\x00":
+            insn_bb98 = 0xb4000001 | (((-117) & 0x7ffff) << 5)
+            if struct.unpack_from("<I", data, 0xbb98)[0] != insn_bb98:
+                struct.pack_into("<I", data, 0xbb98, insn_bb98)
+                struct.pack_into("<I", data, 0xbba8, 0x54000001 | (((-121) & 0x7ffff) << 5))
+                struct.pack_into("<I", data, 0xbbb4, 0x14000000 | ((-124) & 0x3ffffff))
+                struct.pack_into("<I", data, 0xb6d8, 0xb9000bff)
+                struct.pack_into("<I", data, 0xb6dc, 0xb90013ff)
+                data[0x11a60:0x11a70] = b"cpu_thermal\x00\x00\x00\x00\x00"
+                offset_b54c = (0x9820 - 0xb54c) >> 2
+                struct.pack_into("<I", data, 0xb54c, 0x94000000 | (offset_b54c & 0x3ffffff))
+                changed = True
+        if changed:
+            tmp_path = cpu_path + ".tmp"
+            with open(tmp_path, "wb") as f:
+                f.write(data)
+            os.chmod(tmp_path, 0o644)
+            os.replace(tmp_path, cpu_path)
+            print("[argon-oneup-sensors] Successfully patched ksystemstats_plugin_cpu.so for cpu_thermal")
+    except Exception as e:
+        print(f"[argon-oneup-sensors] Warning: could not patch ksystemstats_plugin_cpu: {e}", file=sys.stderr)

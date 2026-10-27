@@ -1,0 +1,7 @@
+# Argon ONE UP Internal USB Power Saving Rules
+# Keep Keyboard & Touchpad (AMIRA 6080) always active to eliminate wakeup latency and lost keystrokes
+ACTION=="add|change", SUBSYSTEM=="usb", ATTR{idVendor}=="6080", TEST=="power/control", ATTR{power/control}="on"
+
+# Webcam (SunplusIT 11cc) & Audio (C-Media 0d8c): Autosuspend enabled when idle
+ACTION=="add|change", SUBSYSTEM=="usb", ATTR{idVendor}=="11cc", TEST=="power/control", ATTR{power/control}="auto", ATTR{power/autosuspend_delay_ms}="2000"
+ACTION=="add|change", SUBSYSTEM=="usb", ATTR{idVendor}=="0d8c", TEST=="power/control", ATTR{power/control}="auto", ATTR{power/autosuspend_delay_ms}="2000"

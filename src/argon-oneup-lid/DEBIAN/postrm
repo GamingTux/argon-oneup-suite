@@ -1,0 +1,12 @@
+#!/bin/bash
+set -e
+if [ "$1" = "purge" ] || [ "$1" = "remove" ]; then
+    for d in /boot/firmware /boot; do
+        rm -f "$d/overlays/argon-oneup-lid.dtbo" 2>/dev/null || true
+        if [ -f "$d/config.txt" ]; then
+            sed -i '/^[[:space:]]*dtoverlay=argon-oneup-lid/d' "$d/config.txt" 2>/dev/null || true
+            echo "[argon-oneup-lid] Removed dtoverlay=argon-oneup-lid from $d/config.txt"
+        fi
+    done
+fi
+exit 0
