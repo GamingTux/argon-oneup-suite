@@ -30,7 +30,7 @@ def load_config():
     """Loads configuration with sane defaults."""
     cfg = {
         "MAX_BATTERY_LOSS_PERCENT": 10,
-        "DISABLE_KEYBOARD_WHEN_CLOSED": True,
+        "DISABLE_KEYBOARD_IN_SLEEP": "always",  # "always", "closed", or "never"
         "SUSPEND_WIFI_POWERSAVE": True,
         "SUSPEND_BLUETOOTH_BLOCK": True,
         "ENABLE_AUDIO_AUTOSUSPEND": True,
@@ -47,7 +47,24 @@ def load_config():
                         k, v = k.strip(), v.strip()
                         if k == "MAX_BATTERY_LOSS_PERCENT":
                             cfg[k] = int(v)
-                        elif k in ("DISABLE_KEYBOARD_WHEN_CLOSED", "SUSPEND_WIFI_POWERSAVE", "SUSPEND_BLUETOOTH_BLOCK", "ENABLE_AUDIO_AUTOSUSPEND"):
+                        elif k in ("DISABLE_KEYBOARD_IN_SLEEP", "DISABLE_KEYBOARD_WHEN_CLOSED"):
+                            val_lower = v.lower()
+                            if val_lower in ("always", "all"):
+                                cfg["DISABLE_KEYBOARD_IN_SLEEP"] = "always"
+                            elif val_lower in ("closed", "lid"):
+                                cfg["DISABLE_KEYBOARD_IN_SLEEP"] = "closed"
+                            elif val_lower in ("never", "none"):
+                                cfg["DISABLE_KEYBOARD_IN_SLEEP"] = "never"
+                            elif val_lower in ("true", "1", "yes"):
+                                if k == "DISABLE_KEYBOARD_WHEN_CLOSED":
+                                    cfg["DISABLE_KEYBOARD_IN_SLEEP"] = "closed"
+                                else:
+                                    cfg["DISABLE_KEYBOARD_IN_SLEEP"] = "always"
+                            elif val_lower in ("false", "0", "no"):
+                                cfg["DISABLE_KEYBOARD_IN_SLEEP"] = "never"
+                            else:
+                                cfg["DISABLE_KEYBOARD_IN_SLEEP"] = "always"
+                        elif k in ("SUSPEND_WIFI_POWERSAVE", "SUSPEND_BLUETOOTH_BLOCK", "ENABLE_AUDIO_AUTOSUSPEND"):
                             cfg[k] = v.lower() in ("true", "1", "yes")
         except Exception:
             pass
@@ -336,8 +353,8 @@ def print_status():
     print(f"Lid State:         {get_lid_state()}")
     print(f"Battery SOC:       {read_battery_soc()}%")
     print(f"On AC Power:       {is_on_ac()}")
-    print(f"Lid Auto-Shutdown: {cfg.get('LID_AUTO_SHUTDOWN_HOURS', 4)} hours")
-    print(f"Max Battery Drain: {cfg.get('MAX_BATTERY_DRAIN_PERCENT', 10)}%")
+    print(f"Keyboard in Sleep: {cfg.get('DISABLE_KEYBOARD_IN_SLEEP', 'always')}")
+    print(f"Max Battery Loss:  {cfg.get('MAX_BATTERY_LOSS_PERCENT', 10)}%")
     print(f"Backlight devices: {glob.glob('/sys/class/backlight/*')}")
     print(f"DRM DPMS devices:  {glob.glob('/sys/class/drm/card*-*/dpms')}")
     print("=============================")
@@ -386,11 +403,13 @@ def main():
     if cfg.get("SUSPEND_BLUETOOTH_BLOCK", True) and not saved_bt_blocked:
         set_bluetooth_power(False)
 
-    # 6. Turn off keyboard backlight if lid is closed (prevents heat against LCD)
-    if lid_was_closed and cfg["DISABLE_KEYBOARD_WHEN_CLOSED"]:
+    # 6. Turn off keyboard backlight & USB power in sleep if configured
+    kbd_mode = cfg.get("DISABLE_KEYBOARD_IN_SLEEP", "always")
+    if kbd_mode == "always" or (kbd_mode == "closed" and lid_was_closed):
+        log(f"Powering off internal keyboard in sleep (mode: {kbd_mode}, lid: {initial_lid})")
         set_keyboard_backlight_power(enable=False)
 
-    # 6. Open input devices and wait via epoll (0% CPU)
+    # 7. Open input devices and wait via epoll (0% CPU)
     epoll = select.epoll()
     open_fds = []
 
@@ -436,8 +455,29 @@ def main():
 
             wake = False
             for fd, event in events:
+                # Handle disconnected devices (e.g. USB keyboard disconnected when power was cut)
+                if event & (select.EPOLLHUP | select.EPOLLERR):
+                    try:
+                        epoll.unregister(fd)
+                        os.close(fd)
+                        if fd in open_fds:
+                            open_fds.remove(fd)
+                    except Exception:
+                        pass
+                    continue
+
                 try:
                     data = os.read(fd, EVENT_SIZE * 16)
+                    if not data:
+                        try:
+                            epoll.unregister(fd)
+                            os.close(fd)
+                            if fd in open_fds:
+                                open_fds.remove(fd)
+                        except Exception:
+                            pass
+                        continue
+
                     for i in range(0, len(data), EVENT_SIZE):
                         chunk = data[i:i+EVENT_SIZE]
                         if len(chunk) < EVENT_SIZE:
@@ -452,7 +492,7 @@ def main():
                                 break
                             elif ev_val == 1:
                                 lid_was_closed = True
-                                if cfg["DISABLE_KEYBOARD_WHEN_CLOSED"]:
+                                if kbd_mode in ("always", "closed"):
                                     set_keyboard_backlight_power(enable=False)
 
                         # EV_KEY (1) -> 1 = key down
