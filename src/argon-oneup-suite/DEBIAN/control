@@ -1,14 +1,15 @@
 Package: argon-oneup-suite
-Version: 1.2.4
+Version: 1.2.5
 Architecture: all
 Maintainer: GamingTux <gamingtux@users.noreply.github.com>
 Section: admin
 Priority: optional
 Homepage: https://github.com/GamingTux/argon-oneup-suite
-Depends: argon-oneup-backlight (>= 1.1.0), argon-oneup-battery (>= 1.2.4), argon-oneup-lid (>= 1.1.0), argon-oneup-sensors (>= 1.1.8), argon-power-profiles (>= 1.2.4), cm5-mmc-fix (>= 1.2.4), rpi-fake-sleep (>= 1.2.4)
+Depends: argon-oneup-essentials (>= 1.2.5), argon-oneup-backlight (>= 1.1.0), argon-oneup-battery (>= 1.2.4), argon-oneup-lid (>= 1.1.0), argon-oneup-sensors (>= 1.1.8), argon-power-profiles (>= 1.2.4), cm5-mmc-fix (>= 1.2.4), rpi-fake-sleep (>= 1.2.4)
 Recommends: argon-oneup-plasma-widget (>= 1.1.9)
 Description: Complete hardware support suite for Argon ONE UP laptop
  Metapackage that installs all drivers, services, and utilities for the
  Argon ONE UP laptop (based on Raspberry Pi 5 / Compute Module 5).
- Includes battery telemetry (CW2217), DDC/CI display backlight, magnetic lid switch,
+ Includes hardware essentials (antenna, NVMe Gen 3, USB host, 2.8 GHz boost, fan curve),
+ battery telemetry (CW2217), DDC/CI display backlight, magnetic lid switch,
  power profiles daemon, hardware sensors, userspace sleep/standby, and CM5 fixes.

@@ -1,0 +1,8 @@
+/etc/argon-oneup-essentials.conf
+/etc/sysctl.d/90-argon-oneup-essentials.conf
+/etc/modules-load.d/argon-bbr.conf
+/etc/systemd/zram-generator.conf.d/90-argon-oneup.conf
+/etc/systemd/journald.conf.d/90-argon-oneup.conf
+/etc/NetworkManager/conf.d/90-argon-oneup-wifi.conf
+/etc/apt/apt.conf.d/90-argon-parallel
+/etc/udev/rules.d/90-argon-storage-io.rules

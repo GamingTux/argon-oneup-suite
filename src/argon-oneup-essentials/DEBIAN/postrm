@@ -1,0 +1,17 @@
+#!/bin/sh
+set -e
+
+if [ "$1" = "remove" ] || [ "$1" = "purge" ]; then
+    for cfg in /boot/firmware/config.txt /boot/config.txt; do
+        if [ -f "$cfg" ]; then
+            sed -i '/^# --- BEGIN ARGON-ONEUP-ESSENTIALS ---$/,/^# --- END ARGON-ONEUP-ESSENTIALS ---$/d' "$cfg" 2>/dev/null || true
+        fi
+    done
+    if [ "$1" = "purge" ]; then
+        rm -f /etc/systemd/zram-generator.conf.d/20-rpi-swap-zram0-ctrl.conf 2>/dev/null || true
+        rm -f /etc/systemd/system/NetworkManager-wait-online.service 2>/dev/null || true
+        rm -f /etc/systemd/system/systemd-networkd-wait-online.service 2>/dev/null || true
+    fi
+fi
+
+exit 0

@@ -35,7 +35,7 @@ if [ -f "${SRC_DIR}/argon-oneup-sensors/usr/src/ksystemstats-ns-helper.c" ]; the
     "${STRIP_BIN}" "${SRC_DIR}/argon-oneup-sensors/usr/bin/ksystemstats-ns-helper"
 fi
 
-for pkg in argon-oneup-backlight argon-oneup-battery argon-oneup-lid argon-oneup-sensors argon-oneup-plasma-widget argon-power-profiles cm5-mmc-fix rpi-fake-sleep argon-oneup-suite; do
+for pkg in argon-oneup-essentials argon-oneup-backlight argon-oneup-battery argon-oneup-lid argon-oneup-sensors argon-oneup-plasma-widget argon-power-profiles cm5-mmc-fix rpi-fake-sleep argon-oneup-suite; do
     PKG_PATH="${SRC_DIR}/${pkg}"
     if [ -d "${PKG_PATH}" ]; then
         echo "Building ${pkg}..."

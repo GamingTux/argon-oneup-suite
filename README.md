@@ -14,10 +14,11 @@ Diese Suite stellt sicher, dass alle Hardware-Komponenten des Laptops (Akku, Dis
 
 ## 📦 Komponenten der Suite
 
-Die Suite ist modular in **8 eigenständige Debian-Pakete** aufgeteilt. Jedes Paket kann einzeln installiert werden oder zusammen über das Metapaket:
+Die Suite ist modular in **9 eigenständige Debian-Pakete** aufgeteilt. Jedes Paket kann einzeln installiert werden oder zusammen über das Metapaket:
 
 | Paket | Typ | Beschreibung |
 | :--- | :---: | :--- |
+| [**`argon-oneup-essentials`**](src/argon-oneup-essentials) | `all` | **Hardware-Basis & System-Tuning:** Konfiguriert die externe WLAN/BT-Displayantenne (`dtparam=ant2`), PCIe Gen 3 für die M.2 NVMe SSD (`pciex1_gen=3`), den internen USB-2.0-Host-Bus (`dwc2`) inkl. 1,6 A USB-Stromlimit, den 2,8 GHz CPU-Boost (`arm_freq=2800`), die leise 4-Stufen-Lüfterkurve mit 5 °C Hysterese sowie sichere System-Optimierungen (TCP BBR, `zstd` ZRAM-Tuning, NVMe/SD I/O-Scheduler & Journald-Schreibschutz). |
 | [**`argon-oneup-plasma-widget`**](src/argon-oneup-plasma-widget) | `arm64` | **KDE Plasma 6 Desktop-Dashboard (`org.argon.oneup.dashboard`):** Zeigt in Echtzeit CPU-Last & Takt pro Kern, VideoCore VII (V3D) GPU-Last & Takt, CW2217 Akku-Telemetrie (Watt, Spannung, Zyklen), RAM/NVMe/USB-Speicherbelegung, Temperaturen (SoC, Akku, NVMe) sowie Lüfterdrehzahl (RPM) und ermöglicht das direkte Umschalten der Energieprofile (*Eco*, *Balanced*, *Turbo*). Nutzt ein kompiliertes Cortex-A76 C-Backend ohne CPU-Overhead. |
 | [**`argon-oneup-battery`**](src/argon-oneup-battery) | `all` | Nativer Linux Kernel `power_supply` Treiber (DKMS) für den Cellwise CW2217 Fuel-Gauge-Chip. Bindet Akku (`BAT0`) und Netzteil (`AC0`) direkt in UPower, KDE Plasma und systemd-logind ein (inkl. dynamischer Restlaufzeitberechnung und Notfall-Shutdown bei kritischem Akkustand). |
 | [**`argon-oneup-backlight`**](src/argon-oneup-backlight) | `all` | Verbindet das interne DDC/CI-Display auf I2C-Bus 14 mit dem Standard Linux `/sys/class/backlight`-Subsystem. Ermöglicht hardwarenahe Helligkeitssteuerung über Funktionstasten, Schieberegler und OSD in allen Desktop-Umgebungen (KDE, Wayfire, Labwc, GNOME). |

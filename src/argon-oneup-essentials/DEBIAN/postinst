@@ -1,0 +1,10 @@
+#!/bin/sh
+set -e
+
+if [ "$1" = "configure" ]; then
+    if [ -x /usr/sbin/argon-essentials-apply ]; then
+        /usr/sbin/argon-essentials-apply || true
+    fi
+fi
+
+exit 0

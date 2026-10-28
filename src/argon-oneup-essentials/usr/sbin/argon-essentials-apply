@@ -1,0 +1,101 @@
+#!/bin/sh
+set -e
+
+CONF_FILE="/etc/argon-oneup-essentials.conf"
+ARM_FREQ=2800
+ENABLE_ANT2=1
+ENABLE_NVME_GEN3=1
+ENABLE_USB_HOST_AND_MAX_CURRENT=1
+ENABLE_FAN_CURVE=1
+
+if [ -f "$CONF_FILE" ]; then
+    # shellcheck disable=SC1090
+    . "$CONF_FILE"
+fi
+
+BOOT_CFG=""
+if [ -f /boot/firmware/config.txt ]; then
+    BOOT_CFG="/boot/firmware/config.txt"
+elif [ -f /boot/config.txt ]; then
+    BOOT_CFG="/boot/config.txt"
+fi
+
+remove_block() {
+    if [ -n "$BOOT_CFG" ] && [ -f "$BOOT_CFG" ]; then
+        sed -i '/^# --- BEGIN ARGON-ONEUP-ESSENTIALS ---$/,/^# --- END ARGON-ONEUP-ESSENTIALS ---$/d' "$BOOT_CFG" 2>/dev/null || true
+    fi
+}
+
+if [ "$1" = "--remove" ]; then
+    remove_block
+    exit 0
+fi
+
+if [ -n "$BOOT_CFG" ] && [ -f "$BOOT_CFG" ]; then
+    remove_block
+
+    {
+        echo "# --- BEGIN ARGON-ONEUP-ESSENTIALS ---"
+        echo "[all]"
+        echo "dtparam=i2c_arm=on"
+        if [ "${ENABLE_NVME_GEN3:-1}" = "1" ]; then
+            echo "dtparam=nvme"
+            echo "dtparam=pciex1_gen=3"
+        fi
+        if [ "${ENABLE_ANT2:-1}" = "1" ]; then
+            echo "dtparam=ant2"
+        fi
+        if [ "${ENABLE_USB_HOST_AND_MAX_CURRENT:-1}" = "1" ]; then
+            echo "usb_max_current_enable=1"
+            echo "dtoverlay=dwc2,dr_mode=host"
+        fi
+        echo "[pi5]"
+        if [ -n "$ARM_FREQ" ] && [ "$ARM_FREQ" -gt 0 ] 2>/dev/null; then
+            echo "arm_freq=${ARM_FREQ}"
+        fi
+        if [ "${ENABLE_FAN_CURVE:-1}" = "1" ]; then
+            echo "dtparam=fan_temp0=40000"
+            echo "dtparam=fan_temp0_speed=100"
+            echo "dtparam=fan_temp0_hyst=5000"
+            echo "dtparam=fan_temp1=50000"
+            echo "dtparam=fan_temp1_speed=150"
+            echo "dtparam=fan_temp1_hyst=5000"
+            echo "dtparam=fan_temp2=60000"
+            echo "dtparam=fan_temp2_speed=200"
+            echo "dtparam=fan_temp2_hyst=5000"
+            echo "dtparam=fan_temp3=70000"
+            echo "dtparam=fan_temp3_speed=250"
+            echo "dtparam=fan_temp3_hyst=5000"
+        fi
+        echo "[all]"
+        echo "# --- END ARGON-ONEUP-ESSENTIALS ---"
+    } >> "$BOOT_CFG"
+fi
+
+# Apply runtime optimizations immediately where possible
+modprobe tcp_bbr 2>/dev/null || true
+sysctl --system >/dev/null 2>&1 || true
+
+# Disable disk swapfile wear if systemd-zram-generator is present
+if [ -d /lib/systemd/system-generators ] && [ -x /lib/systemd/system-generators/zram-generator ]; then
+    if [ -f /etc/rpi/swap.conf ]; then
+        sed -i 's/^#*Mechanism=.*/Mechanism=none/' /etc/rpi/swap.conf 2>/dev/null || true
+    fi
+    mkdir -p /etc/systemd/zram-generator.conf.d
+    if [ ! -e /etc/systemd/zram-generator.conf.d/20-rpi-swap-zram0-ctrl.conf ]; then
+        ln -sf /dev/null /etc/systemd/zram-generator.conf.d/20-rpi-swap-zram0-ctrl.conf 2>/dev/null || true
+    fi
+fi
+
+# Prevent boot delays waiting for network online targets on mobile Wi-Fi laptop
+if [ -d /etc/systemd/system ]; then
+    ln -sf /dev/null /etc/systemd/system/NetworkManager-wait-online.service 2>/dev/null || true
+    ln -sf /dev/null /etc/systemd/system/systemd-networkd-wait-online.service 2>/dev/null || true
+fi
+
+if command -v udevadm >/dev/null 2>&1; then
+    udevadm control --reload-rules 2>/dev/null || true
+    udevadm trigger --subsystem-match=block 2>/dev/null || true
+fi
+
+exit 0
