@@ -115,6 +115,83 @@ def apply_system_power_tweaks(profile):
                 write_sysfs(os.path.join(conn, "status"), "on")
             except OSError:
                 pass
+        sync_external_hdmi_hotplug()
+
+_hdmi0_regs_path = None
+_hdmi_a1_status_path = None
+_hdmi_a1_connect_retries = 0
+
+def _is_system_sleeping():
+    for freeze_path in glob.glob("/sys/fs/cgroup/user.slice/user-*.slice/user@*.service/app.slice/cgroup.freeze"):
+        try:
+            with open(freeze_path, "r") as fp:
+                if fp.read().strip() == "1":
+                    return True
+        except OSError:
+            pass
+    return False
+
+def sync_external_hdmi_hotplug():
+    """
+    Workaround for upstream Raspberry Pi vc4_hdmi_hpd_irq_thread() bug:
+    When vc4.force_hotplug=2 is set (to lock HDMI-A-2 internal laptop panel),
+    vc4_hdmi_hpd_irq_thread() checks '!force_hotplug' globally instead of per-connector
+    bitmask, suppressing HPD interrupts on external HDMI-A-1 (hdmi0).
+    Comparing the hardware HDMI_HOTPLUG register in hdmi0_regs (~0.05ms, no I2C) against
+    card*-HDMI-A-1/status and writing 'detect' only on state mismatch triggers the native
+    kernel drm_kms_helper_hotplug_event() uevent on plug/unplug.
+    """
+    global _hdmi0_regs_path, _hdmi_a1_status_path, _hdmi_a1_connect_retries
+
+    if _is_system_sleeping():
+        return True
+
+    try:
+        if os.path.isfile("/sys/module/vc4/parameters/force_hotplug"):
+            with open("/sys/module/vc4/parameters/force_hotplug", "r") as fp:
+                if (int(fp.read().strip() or "0") & 2) == 0:
+                    return True
+    except (OSError, ValueError):
+        return True
+
+    if not _hdmi_a1_status_path or not os.path.isfile(_hdmi_a1_status_path):
+        paths = sorted(glob.glob("/sys/class/drm/card*-HDMI-A-1/status"))
+        _hdmi_a1_status_path = paths[0] if paths else None
+    if not _hdmi0_regs_path or not os.path.isfile(_hdmi0_regs_path):
+        paths = sorted(glob.glob("/sys/kernel/debug/dri/[0-9]*/hdmi0_regs"))
+        _hdmi0_regs_path = paths[0] if paths else None
+
+    if not _hdmi_a1_status_path or not _hdmi0_regs_path:
+        return True
+
+    try:
+        with open(_hdmi_a1_status_path, "r") as fp:
+            drm_connected = (fp.read().strip() == "connected")
+
+        hw_connected = None
+        with open(_hdmi0_regs_path, "r") as fp:
+            for line in fp:
+                if "HDMI_HOTPLUG" in line:
+                    hw_connected = bool(int(line.rsplit("=", 1)[1].strip(), 16) & 1)
+                    break
+
+        if hw_connected is None:
+            return True
+
+        if not hw_connected:
+            _hdmi_a1_connect_retries = 0
+            if drm_connected:
+                write_sysfs(_hdmi_a1_status_path, "detect")
+        else:
+            if drm_connected:
+                _hdmi_a1_connect_retries = 0
+            elif _hdmi_a1_connect_retries < 3:
+                _hdmi_a1_connect_retries += 1
+                write_sysfs(_hdmi_a1_status_path, "detect")
+    except (OSError, ValueError):
+        pass
+
+    return True
 
     # Enable standard USB runtime autosuspend on USB audio devices without unbinding drivers
     for audio_intf in glob.glob("/sys/bus/usb/drivers/snd-usb-audio/*:*"):
@@ -421,6 +498,9 @@ if __name__ == "__main__":
 
     GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGTERM, on_shutdown)
     GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGINT, on_shutdown)
+
+    if glob.glob("/sys/class/power_supply/BAT*"):
+        GLib.timeout_add_seconds(2, sync_external_hdmi_hotplug)
 
     print("Started Argon ONE UP PowerProfiles Daemon (Event-Driven, 0% Idle Overhead)!")
     loop.run()

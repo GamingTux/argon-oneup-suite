@@ -299,6 +299,44 @@ def lock_internal_panel_hotplug():
         except Exception:
             pass
 
+    sync_external_hdmi_hotplug()
+
+def sync_external_hdmi_hotplug():
+    """
+    Synchronizes external HDMI-A-1 (hdmi0) DRM status with the hardware HDMI_HOTPLUG
+    register when vc4.force_hotplug=2 is active on laptops (working around the upstream
+    vc4_hdmi_hpd_irq_thread() check that suppresses HPD IRQs on HDMI-A-1 when
+    force_hotplug != 0).
+    """
+    if get_lid_state() == "none":
+        return
+
+    try:
+        hw_connected = None
+        for reg_path in sorted(glob.glob("/sys/kernel/debug/dri/[0-9]*/hdmi0_regs")):
+            try:
+                with open(reg_path, "r") as f:
+                    for line in f:
+                        if "HDMI_HOTPLUG" in line:
+                            hw_connected = bool(int(line.rsplit("=", 1)[1].strip(), 16) & 1)
+                            break
+                if hw_connected is not None:
+                    break
+            except Exception:
+                pass
+
+        for st_path in sorted(glob.glob("/sys/class/drm/card*-HDMI-A-1/status")):
+            try:
+                with open(st_path, "r") as f:
+                    drm_connected = (f.read().strip() == "connected")
+                if hw_connected is None or hw_connected != drm_connected:
+                    with open(st_path, "w") as f:
+                        f.write("detect")
+            except Exception:
+                pass
+    except Exception:
+        pass
+
 def ensure_powerdevil_lid_config():
     """
     Ensures the system-wide XDG fallback (/etc/xdg/powerdevilrc) does not suppress
@@ -511,6 +549,8 @@ def blank_displays():
 
 def restore_displays(saved_brightness):
     """Restores DRM DPMS and backlight brightness across Wayland and X11."""
+    sync_external_hdmi_hotplug()
+
     # Wayland DPMS (KDE KWin, RPi OS Labwc/Wayfire, GNOME/Mutter)
     for w in glob.glob("/run/user/*/wayland-*"):
         if w.endswith(".lock"):
