@@ -16,7 +16,7 @@ jobs:
       - name: Install build tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y dpkg-dev shellcheck python3
+          sudo apt-get install -y dpkg-dev shellcheck python3 gcc-aarch64-linux-gnu
 
       - name: Syntax & Lint check
         run: |
