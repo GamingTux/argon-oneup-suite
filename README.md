@@ -14,20 +14,28 @@ Diese Suite stellt sicher, dass alle Hardware-Komponenten des Laptops (Akku, Dis
 
 ## 📦 Komponenten der Suite
 
-Die Suite ist modular in **9 eigenständige Debian-Pakete** aufgeteilt. Jedes Paket kann einzeln installiert werden oder zusammen über das Metapaket:
+Die Suite ist modular in **9 Kernpakete** (Treiber & Dienste) sowie optionale **Desktop-Extras** (`extras/`) aufgeteilt. Jedes Paket kann einzeln installiert werden oder zusammen über das Metapaket:
+
+### Kernpakete (`dist/`)
 
 | Paket | Typ | Beschreibung |
 | :--- | :---: | :--- |
-| [**`argon-oneup-essentials`**](src/argon-oneup-essentials) | `all` | **Hardware-Basis & System-Tuning:** Konfiguriert die externe WLAN/BT-Displayantenne (`dtparam=ant2`), PCIe Gen 3 für die M.2 NVMe SSD (`pciex1_gen=3`), den internen USB-2.0-Host-Bus (`dwc2`) inkl. 1,6 A USB-Stromlimit, den 2,8 GHz CPU-Boost (`arm_freq=2800`), die leise 4-Stufen-Lüfterkurve mit 5 °C Hysterese sowie sichere System-Optimierungen (TCP BBR, `zstd` ZRAM-Tuning, NVMe/SD I/O-Scheduler & Journald-Schreibschutz). |
-| [**`argon-oneup-plasma-widget`**](src/argon-oneup-plasma-widget) | `arm64` | **KDE Plasma 6 Desktop-Dashboard (`org.argon.oneup.dashboard`):** Zeigt in Echtzeit CPU-Last & Takt pro Kern, VideoCore VII (V3D) GPU-Last & Takt, CW2217 Akku-Telemetrie (Watt, Spannung, Zyklen), RAM/NVMe/USB-Speicherbelegung, Temperaturen (SoC, Akku, NVMe) sowie Lüfterdrehzahl (RPM) und ermöglicht das direkte Umschalten der Energieprofile (*Eco*, *Balanced*, *Turbo*). Nutzt ein kompiliertes Cortex-A76 C-Backend ohne CPU-Overhead. |
-| [**`argon-oneup-battery`**](src/argon-oneup-battery) | `all` | Nativer Linux Kernel `power_supply` Treiber (DKMS) für den Cellwise CW2217 Fuel-Gauge-Chip. Bindet Akku (`BAT0`) und Netzteil (`AC0`) direkt in UPower, KDE Plasma und systemd-logind ein (inkl. dynamischer Restlaufzeitberechnung und Notfall-Shutdown bei kritischem Akkustand). |
+| [**`argon-oneup-essentials`**](src/argon-oneup-essentials) | `all` | **Hardware-Basis & System-Tuning:** Konfiguriert die externe WLAN/BT-Displayantenne (`dtparam=ant2`), PCIe Gen 3 für die M.2 NVMe SSD (`pciex1_gen=3`), den internen USB-2.0-Host-Bus (`dwc2`) inkl. 1,6 A USB-Stromlimit, den 2,8 GHz CPU-Boost (`arm_freq=2800`), die leise 4-Stufen-Lüfterkurve mit 5 °C Hysterese, MDIO-Power-Down für den ungenutzten Onboard-Ethernet-PHY sowie sichere System-Optimierungen (TCP BBR, `zstd` ZRAM-Tuning, NVMe/SD I/O-Scheduler & Journald-Schreibschutz). |
+| [**`argon-oneup-battery`**](src/argon-oneup-battery) | `all` | Nativer Linux Kernel `power_supply` Treiber (DKMS) für den Argon ONE UP Battery Management IC (`0x64`). Bindet Akku (`BAT0`) und Netzteil (`AC0`) direkt in UPower, Desktop-Panels und `systemd-logind` ein (inkl. Watt, Ampere, Spannung, Ladezyklen, Temperatur, dynamischer Restlaufzeitberechnung und Notfall-Shutdown bei kritischem Akkustand). |
 | [**`argon-oneup-backlight`**](src/argon-oneup-backlight) | `all` | Verbindet das interne DDC/CI-Display auf I2C-Bus 14 mit dem Standard Linux `/sys/class/backlight`-Subsystem. Ermöglicht hardwarenahe Helligkeitssteuerung über Funktionstasten, Schieberegler und OSD in allen Desktop-Umgebungen (KDE, Wayfire, Labwc, GNOME). |
 | [**`argon-oneup-lid`**](src/argon-oneup-lid) | `all` | Bindet den physischen Hall-Effekt-Magnetschalter am Displaydeckel auf GPIO 27 via Device Tree Overlay als echten Linux-Input-Switch (`SW_LID` / `EV_SW`) ein. |
 | [**`argon-oneup-sensors`**](src/argon-oneup-sensors) | `arm64` | Leitet alle physischen Hardware-Sensoren (CPU-Temperatur, PWM-Lüfterdrehzahl, NVMe-Temperatur, Akku-Telemetrie) standardkonform über `lm-sensors` weiter. Behebt zudem den KDE Plasma 6 `ksystemstats` ARM64 Deadlock ([KDE Bug #493093](https://bugs.kde.org/show_bug.cgi?id=493093)). |
 | [**`argon-power-profiles`**](src/argon-power-profiles) | `all` | Drop-in Ersatz für den `power-profiles-daemon` auf ARM64/Raspberry Pi. Stellt D-Bus-APIs für KDE/GNOME bereit und regelt dynamisch CPU-Governors (1.5 GHz bis Max), WLAN-Energiesparmodus und Backlight-Profile (*Quiet*, *Balanced*, *Performance*). |
 | [**`cm5-mmc-fix`**](src/cm5-mmc-fix) | `all` | Behebt den 30–80 Sekunden langen Shutdown/Reboot-Hang auf dem Raspberry Pi CM5 Lite bei leerem MicroSD-Slot (BCM2712 SDHCI Hardware-Timeout Bug). |
-| [**`rpi-fake-sleep`**](src/rpi-fake-sleep) | `all` | Universeller Standby/Ruhezustand-Manager für Raspberry Pi. Friert Prozesse über cgroups v2 ein, parkt die Kerne C1–C3 per Single-Core-`cpuset`/Workqueue-Pinning dauerhaft im Hardware-`WFI`, legt den kompletten internen USB-2.0-Baum (`snd-usb-audio`, Hub `1-1` & `usb1`) in den Hardware-Suspend und senkt den Standby-Verbrauch auf **3,28 – 3,45 W (~261–275 mA)** bei <1 ms Aufwachzeit. |
-| [**`argon-oneup-suite`**](src/argon-oneup-suite) | `all` | **Metapaket:** Installiert mit einem einzigen Befehl alle oben genannten Pakete als gemeinsame Gesamtsuite. |
+| [**`rpi-fake-sleep`**](src/rpi-fake-sleep) | `all` | Universeller Standby/Ruhezustand-Manager für Raspberry Pi. Friert Prozesse über cgroups v2 ein, parkt die Kerne C1–C3 per Single-Core-`cpuset`/Workqueue-Pinning dauerhaft im Hardware-`WFI`, legt den kompletten internen USB-2.0-Baum (`snd-usb-audio`, `usbhid`, Hub `1-1` & `usb1`) in den Hardware-Suspend und senkt den Standby-Verbrauch auf **3,10 – 3,34 W** bei <1 ms Aufwachzeit. |
+| [**`argon-oneup-suite`**](src/argon-oneup-suite) | `all` | **Metapaket:** Installiert mit einem einzigen Befehl alle 8 oben genannten Hardware-Kernpakete als gemeinsame Gesamtsuite. |
+
+### Extras: Desktop-Widgets & Applets (`dist/extras/`)
+
+| Paket | Typ | Beschreibung |
+| :--- | :---: | :--- |
+| [**`argon-wfplug-batt`**](src/extras/argon-wfplug-batt) | `arm64` | **Erweitertes Batterie-Widget für Raspberry Pi OS (`wf-panel-pi`):** Ersetzt das Standard-Batterie-Plugin (`libbatt.so`) per `dpkg-divert` und zeigt beim Mouseover alle verfügbaren `/sys/class/power_supply/BAT*`-Telemetriedaten strukturiert an (Status, Restlaufzeit, Leistung in W, Stromstärke in A, Spannung inkl. Design-Grenzen, Kapazität in mAh/Wh, Akkuzustand in %, Ladezyklen, Temperatur und Modell/Technologie). Behebt zudem das Cairo-Surface-Memory-Leak des Original-Plugins. |
+| [**`argon-oneup-plasma-widget`**](src/extras/argon-oneup-plasma-widget) | `arm64` | **KDE Plasma 6 Desktop-Dashboard (`org.argon.oneup.dashboard`):** Zeigt in Echtzeit CPU-Last & Takt pro Kern, VideoCore VII (V3D) GPU-Last & Takt, Akku-Telemetrie (Watt, Spannung, Zyklen), RAM/NVMe/USB-Speicherbelegung, Temperaturen (SoC, Akku, NVMe) sowie Lüfterdrehzahl (RPM) und ermöglicht das direkte Umschalten der Energieprofile (*Eco*, *Balanced*, *Turbo*). Nutzt ein kompiliertes Cortex-A76 C-Backend ohne CPU-Overhead. |
 
 ---
 

@@ -1,0 +1,16 @@
+#!/bin/bash
+set -e
+
+if [ "$1" = "remove" ] || [ "$1" = "deconfigure" ]; then
+    WFPANEL_BATT="/usr/lib/aarch64-linux-gnu/wf-panel-pi/libbatt.so"
+    if [ -n "$(dpkg-divert --list "$WFPANEL_BATT" 2>/dev/null)" ]; then
+        rm -f "$WFPANEL_BATT"
+        dpkg-divert --package argon-wfplug-batt --remove --rename \
+            --divert "${WFPANEL_BATT}.distrib" "$WFPANEL_BATT" >/dev/null 2>&1 || true
+        if pgrep -x wf-panel-pi >/dev/null 2>&1; then
+            pkill -x wf-panel-pi 2>/dev/null || true
+        fi
+    fi
+fi
+
+exit 0

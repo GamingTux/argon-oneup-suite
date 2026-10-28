@@ -1,0 +1,17 @@
+Package: argon-wfplug-batt
+Version: 1.2.5
+Architecture: arm64
+Maintainer: GamingTux <gamingtux@users.noreply.github.com>
+Section: x11
+Priority: optional
+Homepage: https://github.com/GamingTux/argon-oneup-suite
+Depends: wf-panel-pi, wfplug-batt
+Description: Enhanced Battery Telemetry Widget for Raspberry Pi OS (wf-panel-pi)
+ Drop-in replacement for the standard wf-panel-pi battery plugin (libbatt.so)
+ on Raspberry Pi OS (rpd-labwc / Wayfire).
+ Dynamically reads and displays all available Linux /sys/class/power_supply/BAT*
+ telemetry attributes on mouseover in a structured order (status, remaining
+ runtime, power in Watts, current in Amps, voltage + design bounds, capacity
+ in Wh/mAh, health %, cycle count, temperature, and battery model/technology),
+ automatically hiding any unsupported fields. Also fixes upstream Cairo surface
+ memory leaks.

@@ -1,0 +1,28 @@
+#!/bin/bash
+set -e
+
+WFPANEL_BATT="/usr/lib/aarch64-linux-gnu/wf-panel-pi/libbatt.so"
+ARGON_BATT="/usr/share/argon-oneup/wf-panel-pi/libbatt.so"
+
+if [ -f "$ARGON_BATT" ]; then
+    mkdir -p /usr/lib/aarch64-linux-gnu/wf-panel-pi
+    DIVERT_INFO="$(dpkg-divert --list "$WFPANEL_BATT" 2>/dev/null || true)"
+    if echo "$DIVERT_INFO" | grep -q "argon-oneup-battery"; then
+        rm -f "$WFPANEL_BATT"
+        dpkg-divert --package argon-oneup-battery --remove --rename \
+            --divert "${WFPANEL_BATT}.distrib" "$WFPANEL_BATT" >/dev/null 2>&1 || true
+        DIVERT_INFO=""
+    fi
+    if [ -z "$DIVERT_INFO" ]; then
+        dpkg-divert --package argon-wfplug-batt --add --rename \
+            --divert "${WFPANEL_BATT}.distrib" "$WFPANEL_BATT" >/dev/null 2>&1 || true
+    fi
+    cp -f "$ARGON_BATT" "$WFPANEL_BATT"
+    chmod 0644 "$WFPANEL_BATT"
+    echo "[argon-wfplug-batt] Installed enhanced wf-panel-pi battery widget ($WFPANEL_BATT)"
+    if pgrep -x wf-panel-pi >/dev/null 2>&1; then
+        pkill -x wf-panel-pi 2>/dev/null || true
+    fi
+fi
+
+exit 0
