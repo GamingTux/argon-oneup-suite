@@ -1,0 +1,56 @@
+name: CI & Package Build
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y dpkg-dev shellcheck python3
+
+      - name: Syntax & Lint check
+        run: |
+          echo "=== Checking Python syntax ==="
+          python3 -m py_compile src/argon-power-profiles/usr/sbin/argon-power-profiles
+          python3 -m py_compile src/argon-oneup-sensors/usr/sbin/ksystemstats-rpi5-fix
+          python3 -m py_compile src/rpi-fake-sleep/usr/bin/rpi-fake-sleep
+          python3 -m py_compile src/rpi-fake-sleep/usr/bin/argon-power-bench
+
+          echo "=== Checking Bash syntax ==="
+          bash -n build_packages.sh
+          find src -type f -name "postinst" -exec bash -n {} +
+          find src -type f -name "postrm" -exec bash -n {} +
+          find src -type f -name "prerm" -exec bash -n {} +
+          bash -n src/argon-oneup-backlight/usr/sbin/argon-backlight-init
+          bash -n src/argon-oneup-sensors/usr/bin/ksystemstats-cpuinfo-gen
+
+      - name: Build Debian packages
+        run: |
+          chmod +x build_packages.sh
+          ./build_packages.sh
+
+      - name: Verify package integrity
+        run: |
+          cd dist
+          sha256sum -c SHA256SUMS
+          for deb in *.deb; do
+            echo "--- $deb ---"
+            dpkg-deb -I "$deb"
+            dpkg-deb -c "$deb"
+          done
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: argon-oneup-packages
+          path: dist/*.deb

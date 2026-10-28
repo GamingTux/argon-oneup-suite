@@ -28,18 +28,29 @@ if [ -n "$BOOT_DIR" ]; then
 fi
 
 # DKMS registration and build
+DKMS_DIR=$(ls -d /usr/src/oneUpPower-* 2>/dev/null | head -n1)
 DKMS_VER="1.0"
+if [ -n "$DKMS_DIR" ] && [ -f "$DKMS_DIR/dkms.conf" ]; then
+    PARSED_VER=$(grep '^PACKAGE_VERSION=' "$DKMS_DIR/dkms.conf" | cut -d'"' -f2)
+    [ -n "$PARSED_VER" ] && DKMS_VER="$PARSED_VER"
+fi
+
 if command -v dkms >/dev/null 2>&1; then
-    if dkms status -m oneUpPower -v "$DKMS_VER" 2>/dev/null | grep -q oneUpPower; then
-        echo "[argon-oneup-battery] Removing existing DKMS registration for oneUpPower/$DKMS_VER..."
-        dkms remove -m oneUpPower -v "$DKMS_VER" --all 2>/dev/null || true
+    KVER=$(uname -r)
+    if ! dkms status -m oneUpPower -v "$DKMS_VER" -k "$KVER" 2>/dev/null | grep -q "installed"; then
+        echo "[argon-oneup-battery] Registering oneUpPower/$DKMS_VER with DKMS..."
+        dkms add -m oneUpPower -v "$DKMS_VER" 2>/dev/null || true
+        echo "[argon-oneup-battery] Building oneUpPower/$DKMS_VER for kernel $KVER..."
+        if ! dkms build -m oneUpPower -v "$DKMS_VER" -k "$KVER"; then
+            echo "WARNING: [argon-oneup-battery] DKMS build failed for kernel $KVER." >&2
+            echo "WARNING: Ensure kernel headers are installed: sudo apt install linux-headers-$KVER" >&2
+        else
+            echo "[argon-oneup-battery] Installing oneUpPower/$DKMS_VER module..."
+            dkms install -m oneUpPower -v "$DKMS_VER" -k "$KVER" || true
+        fi
+    else
+        echo "[argon-oneup-battery] oneUpPower/$DKMS_VER is already installed for kernel $KVER."
     fi
-    echo "[argon-oneup-battery] Registering oneUpPower/$DKMS_VER with DKMS..."
-    dkms add -m oneUpPower -v "$DKMS_VER" 2>/dev/null || true
-    echo "[argon-oneup-battery] Building oneUpPower/$DKMS_VER for current kernel..."
-    dkms build -m oneUpPower -v "$DKMS_VER" 2>/dev/null || true
-    echo "[argon-oneup-battery] Installing oneUpPower/$DKMS_VER module..."
-    dkms install -m oneUpPower -v "$DKMS_VER" 2>/dev/null || true
 fi
 
 # Load i2c-dev if available

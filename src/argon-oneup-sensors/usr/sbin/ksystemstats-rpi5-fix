@@ -9,6 +9,18 @@ root = sys.argv[1] if len(sys.argv) > 1 and os.path.isdir(sys.argv[1]) else ""
 
 cpu_path = os.path.join(root, "usr/lib/aarch64-linux-gnu/qt6/plugins/ksystemstats/ksystemstats_plugin_cpu.so") if root else "/usr/lib/aarch64-linux-gnu/qt6/plugins/ksystemstats/ksystemstats_plugin_cpu.so"
 if os.path.isfile(cpu_path):
+    # Fast path: check stamp to avoid redundant file I/O on unrelated apt invocations
+    stamp_dir = os.path.join(root, "var/lib/argon-oneup-sensors") if root else "/var/lib/argon-oneup-sensors"
+    stamp_file = os.path.join(stamp_dir, "ksystemstats.stamp")
+    try:
+        cur_mtime = str(int(os.path.getmtime(cpu_path)))
+        if os.path.isfile(stamp_file):
+            with open(stamp_file, "r") as sf:
+                if sf.read().strip() == cur_mtime:
+                    sys.exit(0)
+    except Exception:
+        pass
+
     try:
         with open(cpu_path, "rb") as f:
             data = bytearray(f.read())
@@ -32,5 +44,14 @@ if os.path.isfile(cpu_path):
             os.chmod(tmp_path, 0o644)
             os.replace(tmp_path, cpu_path)
             print("[argon-oneup-sensors] Successfully patched ksystemstats_plugin_cpu.so for cpu_thermal")
+
+        # Update stamp
+        try:
+            os.makedirs(stamp_dir, exist_ok=True)
+            new_mtime = str(int(os.path.getmtime(cpu_path)))
+            with open(stamp_file, "w") as sf:
+                sf.write(new_mtime)
+        except Exception:
+            pass
     except Exception as e:
         print(f"[argon-oneup-sensors] Warning: could not patch ksystemstats_plugin_cpu: {e}", file=sys.stderr)

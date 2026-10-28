@@ -76,26 +76,42 @@ def log(msg):
     except Exception:
         pass
 
-def get_lid_state():
-    """Returns 'closed', 'open', or 'none' if no lid switch exists."""
+_cached_lid_dev = None
+
+def get_lid_device_path():
+    """Finds and caches the /dev/input/event* path for the hardware lid switch."""
+    global _cached_lid_dev
+    if _cached_lid_dev and os.path.exists(_cached_lid_dev):
+        return _cached_lid_dev
     for dev in sorted(glob.glob("/dev/input/event*")):
         try:
             fd = os.open(dev, os.O_RDONLY | os.O_NONBLOCK)
             buf = bytearray(256)
             fcntl.ioctl(fd, EVIOCGNAME_256, buf)
             name = buf.split(b'\x00')[0].decode('utf-8', errors='ignore')
-            if "lid" in name.lower():
-                sw = bytearray(4)
-                fcntl.ioctl(fd, EVIOCGSW_4, sw)
-                os.close(fd)
-                return "closed" if (sw[0] & 1) else "open"
             os.close(fd)
+            if "lid" in name.lower():
+                _cached_lid_dev = dev
+                return dev
         except Exception:
-            try:
-                os.close(fd)
-            except Exception:
-                pass
-    return "none"
+            pass
+    return None
+
+def get_lid_state():
+    """Returns 'closed', 'open', or 'none' if no lid switch exists."""
+    global _cached_lid_dev
+    dev = get_lid_device_path()
+    if not dev:
+        return "none"
+    try:
+        fd = os.open(dev, os.O_RDONLY | os.O_NONBLOCK)
+        sw = bytearray(4)
+        fcntl.ioctl(fd, EVIOCGSW_4, sw)
+        os.close(fd)
+        return "closed" if (sw[0] & 1) else "open"
+    except Exception:
+        _cached_lid_dev = None
+        return "none"
 
 def read_battery_soc():
     """Reads current battery capacity in percent, or None if no battery exists."""

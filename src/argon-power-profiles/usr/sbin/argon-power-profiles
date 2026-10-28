@@ -67,8 +67,14 @@ def set_brightness(val):
     val = max(5, min(100, int(val)))
     for bl in glob.glob("/sys/class/backlight/*"):
         try:
+            max_b = 100
+            max_path = os.path.join(bl, "max_brightness")
+            if os.path.isfile(max_path):
+                with open(max_path, "r") as fp:
+                    max_b = int(fp.read().strip())
+            target = max(1, int(round((val / 100.0) * max_b)))
             with open(f"{bl}/brightness", "w") as fp:
-                fp.write(str(val))
+                fp.write(str(target))
         except OSError:
             pass
     for bus_path in glob.glob("/run/user/*/bus"):
@@ -92,8 +98,14 @@ def read_current_brightness():
         except OSError:
             pass
         try:
+            max_b = 100
+            max_path = os.path.join(bl, "max_brightness")
+            if os.path.isfile(max_path):
+                with open(max_path, "r") as fp:
+                    max_b = int(fp.read().strip())
             with open(f"{bl}/brightness", "r") as fp:
-                return int(fp.read().strip())
+                cur = int(fp.read().strip())
+                return int(round((cur / float(max_b)) * 100.0))
         except OSError:
             pass
     return None
