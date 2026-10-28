@@ -17,6 +17,8 @@ PlasmoidItem {
         "model": "Argon ONE UP Laptop (CM5)",
         "cpu": {
             "cores_mhz": [1500, 1500, 1500, 1500],
+            "cores_load": [0, 0, 0, 0],
+            "total_load": 0,
             "max_mhz": 2800,
             "temp_c": 36.5,
             "governor": "ondemand"
@@ -209,13 +211,13 @@ PlasmoidItem {
                     }
                     Item { Layout.fillWidth: true }
                     QQC2.Label {
-                        text: root.telemetry.cpu.governor
+                        text: (root.telemetry.cpu.total_load !== undefined ? root.telemetry.cpu.total_load + "% · " : "") + root.telemetry.cpu.governor
                         font.pointSize: Kirigami.Theme.smallFont.pointSize
-                        opacity: 0.6
+                        opacity: 0.7
                     }
                 }
 
-                // 4 CPU Cores Grid
+                // 4 CPU Cores Grid (Bar = CPU Load %, Label = Clock GHz)
                 GridLayout {
                     Layout.fillWidth: true
                     columns: 2
@@ -238,9 +240,9 @@ PlasmoidItem {
 
                             QQC2.ProgressBar {
                                 Layout.fillWidth: true
-                                from: 600
-                                to: root.telemetry.cpu.max_mhz > 0 ? root.telemetry.cpu.max_mhz : 2800
-                                value: root.telemetry.cpu.cores_mhz[index] ? root.telemetry.cpu.cores_mhz[index] : 600
+                                from: 0
+                                to: 100
+                                value: (root.telemetry.cpu.cores_load && root.telemetry.cpu.cores_load[index] !== undefined) ? root.telemetry.cpu.cores_load[index] : 0
                             }
 
                             QQC2.Label {

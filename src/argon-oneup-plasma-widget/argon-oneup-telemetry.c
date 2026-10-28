@@ -22,6 +22,8 @@ typedef struct {
 
 typedef struct {
     int cores_mhz[4];
+    int cores_load[4];
+    int total_load;
     int max_mhz;
     float cpu_temp_c;
     char governor[32];
@@ -82,6 +84,64 @@ static void read_str(const char *path, char *buf, size_t maxlen, const char *def
         snprintf(buf, maxlen, "%s", def_val);
     }
     fclose(f);
+}
+
+static void get_cpu_loads(Telemetry *t) {
+    FILE *f = fopen("/proc/stat", "r");
+    if (!f) return;
+
+    unsigned long long cur_total[4] = {0}, cur_active[4] = {0};
+    char line[256];
+    while (fgets(line, sizeof(line), f)) {
+        int idx = -1;
+        unsigned long long user = 0, nice = 0, sys = 0, idle = 0, iowait = 0, irq = 0, softirq = 0, steal = 0;
+        if (sscanf(line, "cpu%d %llu %llu %llu %llu %llu %llu %llu %llu",
+                   &idx, &user, &nice, &sys, &idle, &iowait, &irq, &softirq, &steal) >= 5) {
+            if (idx >= 0 && idx < 4) {
+                unsigned long long idle_all = idle + iowait;
+                unsigned long long active = user + nice + sys + irq + softirq + steal;
+                cur_total[idx] = active + idle_all;
+                cur_active[idx] = active;
+            }
+        }
+    }
+    fclose(f);
+
+    unsigned long long prev_total[4] = {0}, prev_active[4] = {0};
+    FILE *pf = fopen("/dev/shm/argon_cpu_prev", "r");
+    if (pf) {
+        for (int i = 0; i < 4; i++) {
+            if (fscanf(pf, "%llu %llu", &prev_total[i], &prev_active[i]) != 2) {
+                prev_total[i] = 0;
+                prev_active[i] = 0;
+            }
+        }
+        fclose(pf);
+    }
+
+    int sum_load = 0;
+    for (int i = 0; i < 4; i++) {
+        int pct = 0;
+        if (prev_total[i] > 0 && cur_total[i] > prev_total[i] && cur_active[i] >= prev_active[i]) {
+            unsigned long long d_tot = cur_total[i] - prev_total[i];
+            unsigned long long d_act = cur_active[i] - prev_active[i];
+            if (d_tot > 0) {
+                pct = (int)((d_act * 100ULL + (d_tot / 2ULL)) / d_tot);
+                if (pct > 100) pct = 100;
+            }
+        }
+        t->cores_load[i] = pct;
+        sum_load += pct;
+    }
+    t->total_load = (sum_load + 2) / 4;
+
+    pf = fopen("/dev/shm/argon_cpu_prev", "w");
+    if (pf) {
+        for (int i = 0; i < 4; i++) {
+            fprintf(pf, "%llu %llu\n", cur_total[i], cur_active[i]);
+        }
+        fclose(pf);
+    }
 }
 
 static int get_gpu_load(void) {
@@ -193,7 +253,7 @@ static void collect_telemetry(Telemetry *t) {
 
     memset(t, 0, sizeof(*t));
 
-    // 1. CPU Cores & Governor
+    // 1. CPU Cores, Load & Governor
     t->max_mhz = (int)(read_int("/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq", 2400000) / 1000);
     char path[128];
     for (int i = 0; i < 4; i++) {
@@ -201,6 +261,7 @@ static void collect_telemetry(Telemetry *t) {
         long val = read_int(path, 0);
         t->cores_mhz[i] = (val > 0) ? (int)(val / 1000) : t->max_mhz;
     }
+    get_cpu_loads(t);
     t->cpu_temp_c = read_int("/sys/class/thermal/thermal_zone0/temp", 0) / 1000.0f;
     read_str("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor", t->governor, sizeof(t->governor), "ondemand");
 
@@ -306,6 +367,11 @@ static void print_json(const Telemetry *t) {
     printf("      %d,\n      %d,\n      %d,\n      %d\n",
            t->cores_mhz[0], t->cores_mhz[1], t->cores_mhz[2], t->cores_mhz[3]);
     printf("    ],\n");
+    printf("    \"cores_load\": [\n");
+    printf("      %d,\n      %d,\n      %d,\n      %d\n",
+           t->cores_load[0], t->cores_load[1], t->cores_load[2], t->cores_load[3]);
+    printf("    ],\n");
+    printf("    \"total_load\": %d,\n", t->total_load);
     printf("    \"max_mhz\": %d,\n", t->max_mhz);
     printf("    \"temp_c\": %.1f,\n", t->cpu_temp_c);
     printf("    \"governor\": \"%s\"\n", t->governor);
@@ -383,9 +449,9 @@ static void print_dashboard(const Telemetry *t) {
     printf("%s%s╠════════════════════════════════════════════════════════════════════════════╣%s\n", BOLD, CYAN, RESET);
 
     // CPU Cores & GPU
-    char cores_buf[64];
-    snprintf(cores_buf, sizeof(cores_buf), "%d MHz, %d MHz, %d MHz, %d MHz",
-             t->cores_mhz[0], t->cores_mhz[1], t->cores_mhz[2], t->cores_mhz[3]);
+    char cores_buf[80];
+    snprintf(cores_buf, sizeof(cores_buf), "C0:%d%% C1:%d%% C2:%d%% C3:%d%% @ %d MHz",
+             t->cores_load[0], t->cores_load[1], t->cores_load[2], t->cores_load[3], t->cores_mhz[0]);
     printf("%s%s║%s  %sCPU:%s     %-44s (Max: %d MHz) %s%s║%s\n",
            BOLD, CYAN, RESET, BOLD, RESET, cores_buf, t->max_mhz, BOLD, CYAN, RESET);
     printf("%s%s║%s  %sGPU:%s     %-25s  Auslastung: %2d%%   Governor: %-10s  %s%s║%s\n",
