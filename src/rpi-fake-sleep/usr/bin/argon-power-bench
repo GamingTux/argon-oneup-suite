@@ -43,12 +43,20 @@ def set_cpufreq_governor(gov):
             continue
         seen.add(real_p)
         try:
+            avail = (read_file(os.path.join(real_p, "scaling_available_governors")) or "").split()
+            actual_gov = gov
+            if gov == "ondemand" and avail and "ondemand" not in avail:
+                actual_gov = "schedutil" if "schedutil" in avail else avail[0]
             maxinfo = read_file(os.path.join(real_p, "cpuinfo_max_freq"))
-            if maxinfo and gov != "powersave":
+            mininfo = read_file(os.path.join(real_p, "cpuinfo_min_freq"))
+            if actual_gov == "powersave" and mininfo:
+                with open(os.path.join(real_p, "scaling_max_freq"), "w") as f:
+                    f.write(mininfo)
+            elif maxinfo:
                 with open(os.path.join(real_p, "scaling_max_freq"), "w") as f:
                     f.write(maxinfo)
             with open(os.path.join(real_p, "scaling_governor"), "w") as f:
-                f.write(gov)
+                f.write(actual_gov)
         except Exception:
             pass
 
@@ -90,19 +98,36 @@ def get_telemetry():
     }
 
 def set_dpms(mode):
-    # Wayland KWin DPMS via kscreen-doctor
-    for w in glob.glob("/run/user/*/wayland-0"):
+    is_off = (mode.lower() == "off")
+    # Wayland DPMS (KDE KWin via kscreen-doctor, RPi OS Labwc/Wayfire via wlopm, GNOME/Mutter via busctl)
+    for w in glob.glob("/run/user/*/wayland-*"):
+        if w.endswith(".lock"):
+            continue
         try:
             uid = w.split("/")[3]
-            cmd = ["sudo", "-u", f"#{uid}", "env", f"XDG_RUNTIME_DIR=/run/user/{uid}", "WAYLAND_DISPLAY=wayland-0", "kscreen-doctor", "--dpms", mode.lower()]
-            subprocess.run(cmd, check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            w_name = os.path.basename(w)
+            env_vars = ["sudo", "-u", f"#{uid}", "env", f"XDG_RUNTIME_DIR=/run/user/{uid}", f"WAYLAND_DISPLAY={w_name}"]
+            if os.path.isfile("/usr/bin/kscreen-doctor"):
+                subprocess.run(env_vars + ["QT_QPA_PLATFORM=wayland", "kscreen-doctor", "--dpms", "off" if is_off else "on"],
+                               check=False, timeout=3, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            if os.path.isfile("/usr/bin/wlopm"):
+                subprocess.run(env_vars + ["wlopm", "--off" if is_off else "--on", "*"],
+                               check=False, timeout=2, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            bus = f"/run/user/{uid}/bus"
+            if os.path.exists(bus):
+                subprocess.run(
+                    env_vars + [f"DBUS_SESSION_BUS_ADDRESS=unix:path={bus}",
+                                "busctl", "--user", "set-property", "org.gnome.Mutter.DisplayConfig",
+                                "/org/gnome/Mutter/DisplayConfig", "org.gnome.Mutter.DisplayConfig", "PowerSaveMode", "i", "3" if is_off else "0"],
+                    check=False, timeout=1, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+                )
         except Exception:
             pass
     # DRM sysfs fallback
     for d in glob.glob("/sys/class/drm/card*-*/dpms"):
         try:
             with open(d, "w") as f:
-                f.write("Off" if mode.lower() == "off" else "On")
+                f.write("Off" if is_off else "On")
         except Exception:
             pass
 
@@ -153,6 +178,13 @@ def set_audio_autosuspend():
     except Exception:
         pass
 
+    if os.path.exists("/sys/bus/usb/drivers/usbhid/1-1.1:1.3"):
+        try:
+            with open("/sys/bus/usb/drivers/usbhid/unbind", "w") as f:
+                f.write("1-1.1:1.3")
+        except Exception:
+            pass
+
     for audio_intf in glob.glob("/sys/bus/usb/drivers/snd-usb-audio/*:*"):
         try:
             usb_dev = os.path.realpath(os.path.join(audio_intf, ".."))
@@ -163,6 +195,16 @@ def set_audio_autosuspend():
                         f.write(val)
         except Exception:
             pass
+
+    for hub_dev in ("/sys/bus/usb/devices/1-1", "/sys/bus/usb/devices/usb1"):
+        for attr, val in (("power/autosuspend_delay_ms", "0"), ("power/control", "auto")):
+            p = os.path.join(hub_dev, attr)
+            if os.path.isfile(p):
+                try:
+                    with open(p, "w") as f:
+                        f.write(val)
+                except Exception:
+                    pass
 
     for usb_ctrl in (
         glob.glob("/sys/bus/platform/devices/*.usb/power/control")
