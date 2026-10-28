@@ -15,6 +15,12 @@ find "${SRC_DIR}" -type f -name "*~" -delete 2>/dev/null || true
 
 echo "=== Building Argon ONE UP Debian Packages ==="
 
+if [ -f "${SRC_DIR}/argon-oneup-plasma-widget/argon-oneup-telemetry.c" ]; then
+    echo "Compiling argon-oneup-telemetry binary (C / Cortex-A76)..."
+    gcc -O3 -pipe -mcpu=cortex-a76+crypto+dotprod "${SRC_DIR}/argon-oneup-plasma-widget/argon-oneup-telemetry.c" -o "${SRC_DIR}/argon-oneup-plasma-widget/usr/bin/argon-oneup-telemetry"
+    strip "${SRC_DIR}/argon-oneup-plasma-widget/usr/bin/argon-oneup-telemetry"
+fi
+
 for pkg in argon-oneup-backlight argon-oneup-battery argon-oneup-lid argon-oneup-sensors argon-oneup-plasma-widget argon-power-profiles cm5-mmc-fix rpi-fake-sleep argon-oneup-suite; do
     PKG_PATH="${SRC_DIR}/${pkg}"
     if [ -d "${PKG_PATH}" ]; then
