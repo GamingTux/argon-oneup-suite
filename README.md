@@ -32,7 +32,7 @@ Die Suite ist modular in **8 eigenständige Debian-Pakete** aufgeteilt. Jedes Pa
 
 ## 🚀 Installation
 
-Alle Pakete stehen im [**aktuellen GitHub Release (v1.1.8)**](https://github.com/GamingTux/argon-oneup-suite/releases/latest) zum Download bereit.
+Alle Pakete stehen im [**aktuellen GitHub Release (v1.1.9)**](https://github.com/GamingTux/argon-oneup-suite/releases/latest) zum Download bereit.
 
 ### Option A: Gesamte Suite installieren (Empfohlen)
 
@@ -52,15 +52,15 @@ Wenn du nur bestimmte Funktionen (z. B. das KDE Plasma Dashboard, die Akkuanzeig
 
 ```bash
 # Beispiel: KDE Plasma 6 Dashboard Widget installieren
-wget https://github.com/GamingTux/argon-oneup-suite/releases/download/v1.1.8/argon-oneup-plasma-widget_1.1.8_arm64.deb
-sudo apt install ./argon-oneup-plasma-widget_1.1.8_arm64.deb
+wget https://github.com/GamingTux/argon-oneup-suite/releases/download/v1.1.9/argon-oneup-plasma-widget_1.1.9_arm64.deb
+sudo apt install ./argon-oneup-plasma-widget_1.1.9_arm64.deb
 
 # Beispiel: Nur Akku-Treiber installieren
-wget https://github.com/GamingTux/argon-oneup-suite/releases/download/v1.1.8/argon-oneup-battery_1.1.8_all.deb
+wget https://github.com/GamingTux/argon-oneup-suite/releases/download/v1.1.9/argon-oneup-battery_1.1.8_all.deb
 sudo apt install ./argon-oneup-battery_1.1.8_all.deb
 
 # Beispiel: Nur Helligkeits-Treiber installieren
-wget https://github.com/GamingTux/argon-oneup-suite/releases/download/v1.1.8/argon-oneup-backlight_1.1.0_all.deb
+wget https://github.com/GamingTux/argon-oneup-suite/releases/download/v1.1.9/argon-oneup-backlight_1.1.0_all.deb
 sudo apt install ./argon-oneup-backlight_1.1.0_all.deb
 ```
 

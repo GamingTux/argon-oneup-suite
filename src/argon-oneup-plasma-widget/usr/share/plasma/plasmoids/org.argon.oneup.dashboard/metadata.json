@@ -10,11 +10,12 @@
         "Category": "System Information",
         "Description": "Hardware Monitor & System Dashboard für den Argon ONE UP Laptop",
         "Description[de]": "Hardware Monitor & System Dashboard für den Argon ONE UP Laptop",
-        "Icon": "computer-laptop",
+        "Icon": "argon-oneup",
         "Id": "org.argon.oneup.dashboard",
         "License": "GPL-2.0+",
         "Name": "Argon ONE UP Dashboard",
         "Name[de]": "Argon ONE UP Dashboard",
+        "Version": "1.1.9",
         "Website": "https://github.com/GamingTux/argon-oneup-suite"
     },
     "X-Plasma-API-Minimum-Version": "6.0",

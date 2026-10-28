@@ -130,12 +130,17 @@ PlasmoidItem {
             // ==================== HEADER ====================
             RowLayout {
                 Layout.fillWidth: true
-                spacing: Kirigami.Units.smallSpacing
+                spacing: Kirigami.Units.smallSpacing * 1.5
 
-                Kirigami.Icon {
-                    source: "computer-laptop"
-                    implicitWidth: Kirigami.Units.iconSizes.medium
-                    implicitHeight: Kirigami.Units.iconSizes.medium
+                Image {
+                    source: Qt.resolvedUrl("../images/argon-oneup.png")
+                    fillMode: Image.PreserveAspectFit
+                    smooth: true
+                    mipmap: true
+                    sourceSize.width: 96
+                    sourceSize.height: 96
+                    Layout.preferredWidth: Kirigami.Units.iconSizes.medium + 8
+                    Layout.preferredHeight: Kirigami.Units.iconSizes.medium + 8
                 }
 
                 ColumnLayout {
