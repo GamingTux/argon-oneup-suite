@@ -6,6 +6,7 @@ ARM_FREQ=2800
 ENABLE_ANT2=1
 ENABLE_NVME_GEN3=1
 ENABLE_USB_HOST_AND_MAX_CURRENT=1
+DISABLE_UNUSED_ETHERNET=1
 ENABLE_FAN_CURVE=1
 
 if [ -f "$CONF_FILE" ]; then
@@ -14,10 +15,13 @@ if [ -f "$CONF_FILE" ]; then
 fi
 
 BOOT_CFG=""
+OVL_DIR=""
 if [ -f /boot/firmware/config.txt ]; then
     BOOT_CFG="/boot/firmware/config.txt"
+    OVL_DIR="/boot/firmware/overlays"
 elif [ -f /boot/config.txt ]; then
     BOOT_CFG="/boot/config.txt"
+    OVL_DIR="/boot/overlays"
 fi
 
 remove_block() {
@@ -31,6 +35,11 @@ if [ "$1" = "--remove" ]; then
     exit 0
 fi
 
+# Install cm5-disable-ethernet.dtbo into boot overlays directory
+if [ -n "$OVL_DIR" ] && [ -d "$OVL_DIR" ] && [ -f /usr/share/argon-oneup/cm5-disable-ethernet.dtbo ]; then
+    cp /usr/share/argon-oneup/cm5-disable-ethernet.dtbo "${OVL_DIR}/cm5-disable-ethernet.dtbo" 2>/dev/null || true
+fi
+
 if [ -n "$BOOT_CFG" ] && [ -f "$BOOT_CFG" ]; then
     remove_block
 
@@ -38,6 +47,8 @@ if [ -n "$BOOT_CFG" ] && [ -f "$BOOT_CFG" ]; then
         echo "# --- BEGIN ARGON-ONEUP-ESSENTIALS ---"
         echo "[all]"
         echo "dtparam=i2c_arm=on"
+        echo "camera_auto_detect=0"
+        echo "display_auto_detect=0"
         if [ "${ENABLE_NVME_GEN3:-1}" = "1" ]; then
             echo "dtparam=nvme"
             echo "dtparam=pciex1_gen=3"
@@ -48,6 +59,9 @@ if [ -n "$BOOT_CFG" ] && [ -f "$BOOT_CFG" ]; then
         if [ "${ENABLE_USB_HOST_AND_MAX_CURRENT:-1}" = "1" ]; then
             echo "usb_max_current_enable=1"
             echo "dtoverlay=dwc2,dr_mode=host"
+        fi
+        if [ "${DISABLE_UNUSED_ETHERNET:-1}" = "1" ]; then
+            echo "dtoverlay=cm5-disable-ethernet"
         fi
         echo "[pi5]"
         if [ -n "$ARM_FREQ" ] && [ "$ARM_FREQ" -gt 0 ] 2>/dev/null; then
@@ -70,6 +84,17 @@ if [ -n "$BOOT_CFG" ] && [ -f "$BOOT_CFG" ]; then
         echo "[all]"
         echo "# --- END ARGON-ONEUP-ESSENTIALS ---"
     } >> "$BOOT_CFG"
+fi
+
+# Configure PSU_MAX_CURRENT=5000 in Raspberry Pi 5 / CM5 EEPROM if supported
+if [ -x /usr/sbin/argononeup-eepromconfig.py ] && command -v rpi-eeprom-update >/dev/null 2>&1; then
+    /usr/sbin/argononeup-eepromconfig.py >/dev/null 2>&1 || true
+fi
+
+# Bind XF86MonBrightnessUp/Down in labwc on Standard Raspberry Pi OS if present
+if [ -f /etc/xdg/labwc/rc.xml ] && ! grep -q "XF86MonBrightnessUp" /etc/xdg/labwc/rc.xml; then
+    sed -i '/<keybind key="XF86AudioMute">/i \    <keybind key="XF86MonBrightnessUp">\n      <action name="Execute" command="argon-brightness-step +10" />\n    </keybind>\n    <keybind key="XF86MonBrightnessDown">\n      <action name="Execute" command="argon-brightness-step -10" />\n    </keybind>' /etc/xdg/labwc/rc.xml 2>/dev/null || true
+    pkill -HUP labwc 2>/dev/null || true
 fi
 
 # Apply runtime optimizations immediately where possible
