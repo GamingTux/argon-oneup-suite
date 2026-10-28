@@ -965,6 +965,57 @@ def set_sd_slot_sleep_power(sleep: bool, saved_sd_drv=None):
                     pass
         return None
 
+def read_interrupt_counts():
+    """Returns a dictionary mapping IRQ labels to total interrupt count across all CPUs."""
+    irqs = {}
+    try:
+        with open("/proc/interrupts", "r") as f:
+            lines = f.read().splitlines()
+        if not lines:
+            return irqs
+        ncpus = len(lines[0].split())
+        for line in lines[1:]:
+            parts = line.split()
+            if not parts:
+                continue
+            counts = [int(x) for x in parts[1:1 + ncpus] if x.isdigit()]
+            if not counts:
+                continue
+            desc = " ".join(parts[1 + len(counts):])[-36:] or parts[0].rstrip(":")
+            irqs[f"{parts[0].rstrip(':')}({desc})"] = sum(counts)
+    except Exception:
+        pass
+    return irqs
+
+def log_wakeup_report(t_start, soc_start, irqs_start):
+    """Logs a concise 1-line standby summary (duration, battery delta & rate, top IRQs/s)."""
+    try:
+        elapsed_s = max(0.1, time.monotonic() - t_start)
+        hours = elapsed_s / 3600.0
+        dur_str = f"{hours:.2f}h" if hours >= 0.1 else f"{elapsed_s:.1f}s"
+
+        soc_end = read_battery_soc()
+        if soc_start is not None and soc_end is not None:
+            diff = soc_end - soc_start
+            bat_str = f", battery {soc_start}% -> {soc_end}% ({diff:+d}%"
+            if hours >= 0.05 and soc_start > soc_end:
+                bat_str += f", {(soc_start - soc_end) / hours:.1f}%/h"
+            bat_str += ")"
+        else:
+            bat_str = ""
+
+        irqs_end = read_interrupt_counts()
+        deltas = sorted(
+            ((irqs_end[k] - irqs_start.get(k, 0), k) for k in irqs_end),
+            reverse=True
+        )[:5]
+        top_irqs = ", ".join(f"{k} {d / elapsed_s:.1f}/s" for d, k in deltas if d > 0)
+        irq_str = f"; top IRQs: {top_irqs}" if top_irqs else ""
+
+        log(f"Standby summary: {dur_str}{bat_str}{irq_str}")
+    except Exception:
+        pass
+
 def sig_handler(signum, frame):
     raise KeyboardInterrupt()
 
@@ -1055,6 +1106,8 @@ def main():
             pass
 
     last_battery_check = time.time()
+    sleep_start_ts = time.monotonic()
+    initial_irqs = read_interrupt_counts()
 
     try:
         while True:
@@ -1173,6 +1226,7 @@ def main():
         if cfg.get("SUSPEND_WIFI_POWERSAVE", True):
             set_wifi_power_save(saved_wifi_powersave)
         restore_audio(saved_audio_mute)
+        log_wakeup_report(sleep_start_ts, initial_soc, initial_irqs)
         log("Wakeup complete, normal power & display restored")
 
     sys.exit(0)
