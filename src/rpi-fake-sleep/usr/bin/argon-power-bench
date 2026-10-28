@@ -156,14 +156,6 @@ def set_audio_autosuspend():
     for audio_intf in glob.glob("/sys/bus/usb/drivers/snd-usb-audio/*:*"):
         try:
             usb_dev = os.path.realpath(os.path.join(audio_intf, ".."))
-            for sibling in glob.glob(os.path.join(usb_dev, "*:*")):
-                drv_link = os.path.join(sibling, "driver")
-                if os.path.islink(drv_link) and os.path.basename(os.readlink(drv_link)) == "usbhid":
-                    try:
-                        with open("/sys/bus/usb/drivers/usbhid/unbind", "w") as f:
-                            f.write(os.path.basename(sibling))
-                    except Exception:
-                        pass
             for attr, val in (("power/autosuspend_delay_ms", "500"), ("power/control", "auto")):
                 p = os.path.join(usb_dev, attr)
                 if os.path.isfile(p):
@@ -182,17 +174,6 @@ def set_audio_autosuspend():
         except Exception:
             pass
 
-    for pm_ctrl in (
-        glob.glob("/sys/bus/platform/devices/*.codec/power/control")
-        + glob.glob("/sys/bus/platform/devices/*.isp/power/control")
-        + glob.glob("/sys/bus/platform/devices/*.pisp_be/power/control")
-    ):
-        try:
-            with open(pm_ctrl, "w") as f:
-                f.write("auto")
-        except Exception:
-            pass
-
 def set_fan_sleep_mode(sleep: bool):
     for h in sorted(glob.glob("/sys/class/hwmon/hwmon*")):
         if read_file(os.path.join(h, "name")) == "pwmfan":
@@ -207,32 +188,6 @@ def set_fan_sleep_mode(sleep: bool):
                         f.write("2")
             except Exception:
                 pass
-
-def set_sd_slot_sleep_power(sleep: bool, saved_drv=None):
-    sd_dev = "1000fff000.mmc"
-    if sleep:
-        if os.path.exists("/dev/mmcblk0"):
-            return None
-        for d in glob.glob(f"/sys/bus/platform/drivers/*/{sd_dev}"):
-            if os.path.exists(d):
-                drv_dir = os.path.dirname(d)
-                try:
-                    with open(os.path.join(drv_dir, "unbind"), "w") as f:
-                        f.write(sd_dev)
-                    return drv_dir
-                except Exception:
-                    pass
-        return None
-    else:
-        if saved_drv and os.path.isdir(saved_drv):
-            bind_file = os.path.join(saved_drv, "bind")
-            if os.path.isfile(bind_file) and not os.path.exists(os.path.join(saved_drv, sd_dev)):
-                try:
-                    with open(bind_file, "w") as f:
-                        f.write(sd_dev)
-                except Exception:
-                    pass
-        return None
 
 def sample_period(name, duration_sec, interval=1.0):
     print(f"\n[*] Starte Messung: {name} ({duration_sec} Sekunden)...")
@@ -398,12 +353,10 @@ def run_benchmark(duration=60):
         except Exception:
             pass
 
-        # 5. Radio, Audio, Fan & empty SD-slot power savings
+        # 5. Radio, Audio & Fan power savings
         set_wifi_power_save(True)
-        set_bluetooth_power(False)
         set_audio_autosuspend()
         set_fan_sleep_mode(True)
-        saved_sd_drv = set_sd_slot_sleep_power(True)
 
         time.sleep(3) # Wait for complete settling
         sleep_samples = sample_period("FakeSleep", duration)
@@ -424,8 +377,6 @@ def run_benchmark(duration=60):
         except Exception:
             pass
         set_fan_sleep_mode(False)
-        set_sd_slot_sleep_power(False, locals().get("saved_sd_drv"))
-        set_bluetooth_power(True)
         set_wifi_power_save(False)
         set_cgroups_frozen(freeze=False)
         set_keyboard_power(enable=True)

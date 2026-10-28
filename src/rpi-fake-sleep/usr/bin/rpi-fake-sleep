@@ -194,12 +194,7 @@ def set_bluetooth_power(enable: bool):
             pass
 
 def set_audio_autosuspend():
-    """
-    Enables native transparent USB autosuspend on USB audio interfaces without disconnecting
-    the sound card, by unbinding any unused composite usbhid sub-interface (e.g. 1-1.1:1.3)
-    that would otherwise block the composite USB device, parent hub (1-1), and DWC2 controller
-    (usb1) from entering runtime suspend.
-    """
+    """Enables standard USB runtime autosuspend on USB audio devices without unbinding drivers."""
     try:
         if os.path.isfile("/sys/module/workqueue/parameters/power_efficient"):
             with open("/sys/module/workqueue/parameters/power_efficient", "w") as f:
@@ -210,14 +205,6 @@ def set_audio_autosuspend():
     for audio_intf in glob.glob("/sys/bus/usb/drivers/snd-usb-audio/*:*"):
         try:
             usb_dev = os.path.realpath(os.path.join(audio_intf, ".."))
-            for sibling in glob.glob(os.path.join(usb_dev, "*:*")):
-                drv_link = os.path.join(sibling, "driver")
-                if os.path.islink(drv_link) and os.path.basename(os.readlink(drv_link)) == "usbhid":
-                    try:
-                        with open("/sys/bus/usb/drivers/usbhid/unbind", "w") as f:
-                            f.write(os.path.basename(sibling))
-                    except Exception:
-                        pass
             for attr, val in (("power/autosuspend_delay_ms", "500"), ("power/control", "auto")):
                 p = os.path.join(usb_dev, attr)
                 if os.path.isfile(p):
@@ -226,7 +213,7 @@ def set_audio_autosuspend():
         except Exception:
             pass
 
-    # Keep RP1 xHCI (xhci-hcd.*) and DWC2 (*.usb) platform controllers at 'on'
+    # Keep RP1 xHCI (xhci-hcd.*) and DWC2 (*.usb) platform controllers at standard 'on'
     # so empty USB 3.0 / 3.1 ports never lose hotplug detection
     for usb_ctrl in (
         glob.glob("/sys/bus/platform/devices/*.usb/power/control")
@@ -235,17 +222,6 @@ def set_audio_autosuspend():
         try:
             with open(usb_ctrl, "w") as f:
                 f.write("on")
-        except Exception:
-            pass
-
-    for pm_ctrl in (
-        glob.glob("/sys/bus/platform/devices/*.codec/power/control")
-        + glob.glob("/sys/bus/platform/devices/*.isp/power/control")
-        + glob.glob("/sys/bus/platform/devices/*.pisp_be/power/control")
-    ):
-        try:
-            with open(pm_ctrl, "w") as f:
-                f.write("auto")
         except Exception:
             pass
 
@@ -325,123 +301,31 @@ def lock_internal_panel_hotplug():
 
 def ensure_powerdevil_lid_config():
     """
-    Ensures KDE PowerDevil does not suppress LidAction when HDMI-A-2 (the internal
-    Argon ONE UP panel, which is an HDMI connector rather than eDP) stays connected
-    via vc4.force_hotplug=2.
+    Ensures the system-wide XDG fallback (/etc/xdg/powerdevilrc) does not suppress
+    LidAction when HDMI-A-2 (the internal Argon ONE UP panel) stays connected via
+    vc4.force_hotplug=2. Never modifies user files in /home.
     """
-    if get_lid_state() == "none":
+    if get_lid_state() == "none" or not os.path.isdir("/etc/xdg"):
         return
 
-    updated = False
-    pd_files = ["/etc/xdg/powerdevilrc"] + glob.glob("/home/*/.config/powerdevilrc")
-    for pd_file in pd_files:
-        try:
-            content = ""
-            st_uid, st_gid = 0, 0
-            if os.path.isfile(pd_file):
-                st = os.stat(pd_file)
-                st_uid, st_gid = st.st_uid, st.st_gid
-                with open(pd_file, "r") as f:
-                    content = f.read()
-            elif pd_file.startswith("/home/"):
-                home_dir = "/".join(pd_file.split("/")[:3])
-                if os.path.isdir(home_dir):
-                    st = os.stat(home_dir)
-                    st_uid, st_gid = st.st_uid, st.st_gid
+    pd_file = "/etc/xdg/powerdevilrc"
+    try:
+        content = ""
+        if os.path.isfile(pd_file):
+            with open(pd_file, "r") as f:
+                content = f.read()
 
-            orig = content
-            for sec in ("[AC][SuspendAndShutdown]", "[Battery][SuspendAndShutdown]", "[LowBattery][SuspendAndShutdown]"):
-                if sec not in content:
-                    content = content.rstrip() + f"\n\n{sec}\nInhibitLidActionWhenExternalMonitorPresent=false\nLidAction=1\n"
-                elif "InhibitLidActionWhenExternalMonitorPresent" not in content.split(sec, 1)[1].split("\n[", 1)[0]:
-                    content = content.replace(sec, f"{sec}\nInhibitLidActionWhenExternalMonitorPresent=false")
-            if content != orig:
-                os.makedirs(os.path.dirname(pd_file), exist_ok=True)
-                with open(pd_file, "w") as f:
-                    f.write(content)
-                if st_uid != 0:
-                    os.chown(pd_file, st_uid, st_gid)
-                updated = True
-        except Exception:
-            pass
-
-    if updated:
-        for bus in glob.glob("/run/user/*/bus"):
-            try:
-                uid = bus.split("/")[3]
-                subprocess.run(
-                    ["sudo", "-u", f"#{uid}", "env", f"XDG_RUNTIME_DIR=/run/user/{uid}",
-                     "DBUS_SESSION_BUS_ADDRESS=unix:path=" + bus,
-                     "systemctl", "--user", "restart", "plasma-powerdevil.service"],
-                    check=False, timeout=3, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-                )
-            except Exception:
-                pass
-
-    # Ensure KDE Plasma primary panel (org.kde.panel) stays bound to Primary screen (lastScreen=0)
-    # and single-monitor boot (HDMI-A-1 disconnected) never leaves the panel/desktop stuck on lastScreen=1
-    ext_connected = False
-    for st_file in glob.glob("/sys/class/drm/card*-HDMI-A-1/status"):
-        try:
-            with open(st_file, "r") as f:
-                if f.read().strip() == "connected":
-                    ext_connected = True
-        except Exception:
-            pass
-
-    for app_file in glob.glob("/home/*/.config/plasma-org.kde.plasma.desktop-appletsrc"):
-        try:
-            with open(app_file, "r") as f:
-                lines = f.read().splitlines()
-            changed = False
-            in_top_containment = False
-            sec_lines = []
-            out_lines = []
-
-            def flush_sec(slines):
-                nonlocal changed
-                text = "\n".join(slines)
-                is_panel = "plugin=org.kde.panel" in text
-                is_folder = "plugin=org.kde.plasma.folder" in text
-                if (is_panel or (is_folder and not ext_connected)) and "lastScreen=1" in text:
-                    slines = ["lastScreen=0" if l.strip() == "lastScreen=1" else l for l in slines]
-                    changed = True
-                return slines
-
-            for line in lines:
-                if line.startswith("["):
-                    if sec_lines:
-                        out_lines.extend(flush_sec(sec_lines))
-                        sec_lines = []
-                    in_top_containment = (line.startswith("[Containments][") and line.count("[") == 2)
-                if in_top_containment:
-                    sec_lines.append(line)
-                else:
-                    out_lines.append(line)
-            if sec_lines:
-                out_lines.extend(flush_sec(sec_lines))
-
-            if changed:
-                st = os.stat(app_file)
-                with open(app_file, "w") as f:
-                    f.write("\n".join(out_lines) + "\n")
-                os.chown(app_file, st.st_uid, st.st_gid)
-        except Exception:
-            pass
-
-    if not ext_connected:
-        for ps_file in glob.glob("/home/*/.config/plasmashellrc"):
-            try:
-                with open(ps_file, "r") as f:
-                    ps_txt = f.read()
-                if "[ScreenConnectors]" in ps_txt and "0=HDMI-A-1" in ps_txt:
-                    st = os.stat(ps_file)
-                    ps_new = ps_txt.replace("0=HDMI-A-1", "0=HDMI-A-2").replace("1=HDMI-A-2", "1=HDMI-A-1")
-                    with open(ps_file, "w") as f:
-                        f.write(ps_new)
-                    os.chown(ps_file, st.st_uid, st.st_gid)
-            except Exception:
-                pass
+        orig = content
+        for sec in ("[AC][SuspendAndShutdown]", "[Battery][SuspendAndShutdown]", "[LowBattery][SuspendAndShutdown]"):
+            if sec not in content:
+                content = content.rstrip() + f"\n\n{sec}\nInhibitLidActionWhenExternalMonitorPresent=false\nLidAction=1\n"
+            elif "InhibitLidActionWhenExternalMonitorPresent" not in content.split(sec, 1)[1].split("\n[", 1)[0]:
+                content = content.replace(sec, f"{sec}\nInhibitLidActionWhenExternalMonitorPresent=false")
+        if content != orig:
+            with open(pd_file, "w") as f:
+                f.write(content)
+    except Exception:
+        pass
 
 def pause_media_players():
     """
@@ -701,27 +585,6 @@ def apply_power_saving():
             except Exception:
                 pass
 
-    # 1b. For desktop environments (Cinnamon, XFCE, MATE, Labwc) that place apps in
-    # session-*.scope instead of app.slice, send SIGSTOP to heavy user app processes
-    stopped_pids = []
-    app_names = ("firefox", "chromium", "brave", "chrome", "epiphany", "midori",
-                 "vlc", "mpv", "celluloid", "zapzap", "electron", "wine", "box64")
-    for scope_procs in glob.glob("/sys/fs/cgroup/user.slice/user-*.slice/session-*.scope/cgroup.procs"):
-        try:
-            with open(scope_procs, "r") as f:
-                pids = [int(p.strip()) for p in f if p.strip().isdigit()]
-            for pid in pids:
-                try:
-                    with open(f"/proc/{pid}/comm", "r") as cf:
-                        comm = cf.read().strip().lower()
-                    if any(comm.startswith(a) for a in app_names):
-                        os.kill(pid, signal.SIGSTOP)
-                        stopped_pids.append(pid)
-                except Exception:
-                    pass
-        except Exception:
-            pass
-
     # 2. Throttle CPU governor to powersave and minimum clock
     # Note: On RPi 5 / CM5, cpu0..cpu3/cpufreq are symlinks to shared ../cpufreq/policy0.
     # Deduplicate via realpath so writing to policy0 does not corrupt subsequent reads.
@@ -784,7 +647,6 @@ def apply_power_saving():
     except Exception:
         pass
 
-    saved_cpu_state["__stopped_pids__"] = stopped_pids
     return saved_cpu_state
 
 def restore_power(saved_cpu_state):
@@ -807,20 +669,13 @@ def restore_power(saved_cpu_state):
     except Exception:
         pass
 
-    # 1. Unfreeze cgroups v2 user apps & SIGCONT any session-scope apps
+    # 1. Unfreeze cgroups v2 user apps
     for uid_dir in glob.glob("/sys/fs/cgroup/user.slice/user-*.slice/user@*.service/app.slice"):
         freeze_path = os.path.join(uid_dir, "cgroup.freeze")
         if os.path.exists(freeze_path):
             try:
                 with open(freeze_path, "w") as f:
                     f.write("0")
-            except Exception:
-                pass
-
-    if isinstance(saved_cpu_state, dict):
-        for pid in saved_cpu_state.get("__stopped_pids__", []):
-            try:
-                os.kill(pid, signal.SIGCONT)
             except Exception:
                 pass
 
@@ -962,16 +817,10 @@ def set_fan_sleep_mode(sleep: bool, saved_state=None):
         return state
     else:
         try:
-            prev_en = "2"
-            if isinstance(saved_state, dict):
-                prev_en = saved_state.get("pwm1_enable", "2")
-                if prev_en not in ("1", "2"):
-                    prev_en = "2"
             if os.path.isfile(en_file):
                 with open(en_file, "w") as f:
-                    f.write(prev_en)
-            if prev_en == "2":
-                seed_thermal_cooling_state()
+                    f.write("2")
+            seed_thermal_cooling_state()
         except Exception:
             pass
         return None
@@ -1011,45 +860,6 @@ def check_fan_thermal_watchdog(saved_fan_state, threshold_mc=68000):
             saved_fan_state["watchdog_active"] = False
     except Exception:
         pass
-
-def set_sd_slot_sleep_power(sleep: bool, saved_sd_drv=None):
-    """
-    Powers down the empty SDHCI slot controller (1000fff000.mmc) during sleep to save
-    ~70-120 mW on the vcc-sd rail when the system runs from NVMe/USB and no SD card
-    is present. Skips unbinding if an SD card (/dev/mmcblk0) is inserted so wakeup
-    does not trigger removable-media hotplug notifications in the desktop environment.
-    """
-    sd_dev = "1000fff000.mmc"
-    if sleep:
-        if os.path.exists("/dev/mmcblk0"):
-            return None
-        try:
-            with open("/proc/mounts", "r") as f:
-                if "mmcblk" in f.read():
-                    return None
-        except Exception:
-            return None
-        for d in glob.glob(f"/sys/bus/platform/drivers/*/{sd_dev}"):
-            if os.path.exists(d):
-                drv_dir = os.path.dirname(d)
-                unbind_file = os.path.join(drv_dir, "unbind")
-                try:
-                    with open(unbind_file, "w") as f:
-                        f.write(sd_dev)
-                    return drv_dir
-                except Exception:
-                    pass
-        return None
-    else:
-        if saved_sd_drv and os.path.isdir(saved_sd_drv):
-            bind_file = os.path.join(saved_sd_drv, "bind")
-            if os.path.isfile(bind_file) and not os.path.exists(os.path.join(saved_sd_drv, sd_dev)):
-                try:
-                    with open(bind_file, "w") as f:
-                        f.write(sd_dev)
-                except Exception:
-                    pass
-        return None
 
 def read_interrupt_counts():
     """Returns a dictionary mapping IRQ labels to total interrupt count across all CPUs."""
@@ -1163,7 +973,7 @@ def main():
     # 4. Freeze apps & throttle CPU
     saved_cpu_state = apply_power_saving()
 
-    # 5. Radio, Audio, Fan & empty SD-slot power savings
+    # 5. Radio, Audio & Fan power savings
     if cfg.get("ENABLE_AUDIO_AUTOSUSPEND", True):
         set_audio_autosuspend()
     if cfg.get("SUSPEND_WIFI_POWERSAVE", True):
@@ -1171,7 +981,6 @@ def main():
     if cfg.get("SUSPEND_BLUETOOTH_BLOCK", False) and not saved_bt_blocked:
         set_bluetooth_power(False)
     saved_fan_state = set_fan_sleep_mode(True)
-    saved_sd_drv = set_sd_slot_sleep_power(True)
 
     # 6. Turn off keyboard backlight & USB power in sleep if configured
     kbd_mode = cfg.get("DISABLE_KEYBOARD_IN_SLEEP", "always")
@@ -1299,7 +1108,6 @@ def main():
         # clients (Firefox, etc.) are awake BEFORE KWin turns display DPMS back on
         restore_power(saved_cpu_state)
         set_fan_sleep_mode(False, saved_fan_state)
-        set_sd_slot_sleep_power(False, saved_sd_drv)
         time.sleep(0.05)
 
         # 2. Restore displays (DPMS On & brightness)
