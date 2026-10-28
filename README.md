@@ -6,16 +6,19 @@
 
 Vollständige Hardware-Treiber-, Energie- und Desktop-Integrations-Suite für das **Argon ONE UP Laptop** (basierend auf dem Raspberry Pi Compute Module 5 / Pi 5).
 
-Diese Suite stellt sicher, dass alle Hardware-Komponenten des Laptops (Akku, Display-Helligkeit, Deckelschalter, Lüfter, Powermanagement und Ruhezustand) „Out-of-the-Box“ unter Standard-Linux-Distributionen (Raspberry Pi OS 64-Bit, Debian, Ubuntu) nahtlos und nach offiziellen Kernel-Standards funktionieren.
+Diese Suite stellt sicher, dass alle Hardware-Komponenten des Laptops (Akku, Display-Helligkeit, Deckelschalter, Lüfter, Powermanagement, Desktop-Telemetrie und Ruhezustand) „Out-of-the-Box“ unter Standard-Linux-Distributionen (Raspberry Pi OS 64-Bit, Debian, Ubuntu) nahtlos und nach offiziellen Kernel-Standards funktionieren.
+
+![Argon ONE UP KDE Plasma 6 Dashboard](assets/dashboard-screenshot.png)
 
 ---
 
 ## 📦 Komponenten der Suite
 
-Die Suite ist modular in **7 eigenständige Debian-Pakete** aufgeteilt. Jedes Paket kann einzeln installiert werden oder zusammen über das Metapaket:
+Die Suite ist modular in **8 eigenständige Debian-Pakete** aufgeteilt. Jedes Paket kann einzeln installiert werden oder zusammen über das Metapaket:
 
 | Paket | Typ | Beschreibung |
 | :--- | :---: | :--- |
+| [**`argon-oneup-plasma-widget`**](src/argon-oneup-plasma-widget) | `arm64` | **KDE Plasma 6 Desktop-Dashboard (`org.argon.oneup.dashboard`):** Zeigt in Echtzeit CPU-Last & Takt pro Kern, VideoCore VII (V3D) GPU-Last & Takt, CW2217 Akku-Telemetrie (Watt, Spannung, Zyklen), RAM/NVMe/USB-Speicherbelegung, Temperaturen (SoC, Akku, NVMe) sowie Lüfterdrehzahl (RPM) und ermöglicht das direkte Umschalten der Energieprofile (*Eco*, *Balanced*, *Turbo*). Nutzt ein kompiliertes Cortex-A76 C-Backend ohne CPU-Overhead. |
 | [**`argon-oneup-battery`**](src/argon-oneup-battery) | `all` | Nativer Linux Kernel `power_supply` Treiber (DKMS) für den Cellwise CW2217 Fuel-Gauge-Chip. Bindet Akku (`BAT0`) und Netzteil (`AC0`) direkt in UPower, KDE Plasma und systemd-logind ein (inkl. dynamischer Restlaufzeitberechnung und Notfall-Shutdown bei kritischem Akkustand). |
 | [**`argon-oneup-backlight`**](src/argon-oneup-backlight) | `all` | Verbindet das interne DDC/CI-Display auf I2C-Bus 14 mit dem Standard Linux `/sys/class/backlight`-Subsystem. Ermöglicht hardwarenahe Helligkeitssteuerung über Funktionstasten, Schieberegler und OSD in allen Desktop-Umgebungen (KDE, Wayfire, Labwc, GNOME). |
 | [**`argon-oneup-lid`**](src/argon-oneup-lid) | `all` | Bindet den physischen Hall-Effekt-Magnetschalter am Displaydeckel auf GPIO 27 via Device Tree Overlay als echten Linux-Input-Switch (`SW_LID` / `EV_SW`) ein. |
@@ -23,41 +26,42 @@ Die Suite ist modular in **7 eigenständige Debian-Pakete** aufgeteilt. Jedes Pa
 | [**`argon-power-profiles`**](src/argon-power-profiles) | `all` | Drop-in Ersatz für den `power-profiles-daemon` auf ARM64/Raspberry Pi. Stellt D-Bus-APIs für KDE/GNOME bereit und regelt dynamisch CPU-Governors (1.5 GHz bis Max), WLAN-Energiesparmodus und Backlight-Profile (*Quiet*, *Balanced*, *Performance*). |
 | [**`cm5-mmc-fix`**](src/cm5-mmc-fix) | `all` | Behebt den 30–80 Sekunden langen Shutdown/Reboot-Hang auf dem Raspberry Pi CM5 Lite bei leerem MicroSD-Slot (BCM2712 SDHCI Hardware-Timeout Bug). |
 | [**`rpi-fake-sleep`**](src/rpi-fake-sleep) | `all` | Universeller Standby/Ruhezustand-Manager für Raspberry Pi. Friert Prozesse über cgroups v2 ein, taktet die CPU herunter, schaltet das Display ab und weckt das System blitzschnell bei Tastendruck oder Deckelöffnen auf. |
-| [**`argon-oneup-suite`**](src/argon-oneup-suite) | `all` | **Metapaket:** Installiert mit einem einzigen Befehl alle oben genannten 7 Pakete als gemeinsame Gesamtsuite. |
+| [**`argon-oneup-suite`**](src/argon-oneup-suite) | `all` | **Metapaket:** Installiert mit einem einzigen Befehl alle oben genannten Pakete als gemeinsame Gesamtsuite. |
 
 ---
 
 ## 🚀 Installation
 
-Alle Pakete stehen im [**GitHub Release v1.0.0**](https://github.com/GamingTux/argon-oneup-suite/releases) zum Download bereit.
+Alle Pakete stehen im [**aktuellen GitHub Release (v1.1.5)**](https://github.com/GamingTux/argon-oneup-suite/releases/latest) zum Download bereit.
 
-### Option A: Gesamte Suite mit einem Klick (Empfohlen)
+### Option A: Gesamte Suite installieren (Empfohlen)
 
-Lade das Metapaket `argon-oneup-suite` herunter und installiere es mit `apt`:
+Lade die `.deb`-Pakete des aktuellen Releases herunter und installiere sie mit `apt`:
 
 ```bash
-# 1. Metapaket und Abhängigkeiten herunterladen
-wget https://github.com/GamingTux/argon-oneup-suite/releases/download/v1.0.0/argon-oneup-suite_1.0.0_all.deb
-
-# 2. Installieren (apt löst alle Abhängigkeiten automatisch auf)
+# Alle Pakete des Releases installieren (inkl. KDE Plasma Dashboard Widget)
 sudo apt update
-sudo apt install ./argon-oneup-suite_1.0.0_all.deb
+sudo apt install ./argon-*.deb ./cm5-mmc-fix_*.deb ./rpi-fake-sleep_*.deb
 ```
 
 ---
 
 ### Option B: Einzelne Pakete nach Bedarf installieren
 
-Wenn du nur bestimmte Funktionen (z. B. nur die Akkuanzeige oder nur die Helligkeitssteuerung) nutzen möchtest:
+Wenn du nur bestimmte Funktionen (z. B. das KDE Plasma Dashboard, die Akkuanzeige oder die Helligkeitssteuerung) nutzen möchtest:
 
 ```bash
+# Beispiel: KDE Plasma 6 Dashboard Widget installieren
+wget https://github.com/GamingTux/argon-oneup-suite/releases/download/v1.1.5/argon-oneup-plasma-widget_1.1.5_arm64.deb
+sudo apt install ./argon-oneup-plasma-widget_1.1.5_arm64.deb
+
 # Beispiel: Nur Akku-Treiber installieren
-wget https://github.com/GamingTux/argon-oneup-suite/releases/download/v1.0.0/argon-oneup-battery_1.0.0_all.deb
-sudo apt install ./argon-oneup-battery_1.0.0_all.deb
+wget https://github.com/GamingTux/argon-oneup-suite/releases/download/v1.1.5/argon-oneup-battery_1.1.0_all.deb
+sudo apt install ./argon-oneup-battery_1.1.0_all.deb
 
 # Beispiel: Nur Helligkeits-Treiber installieren
-wget https://github.com/GamingTux/argon-oneup-suite/releases/download/v1.0.0/argon-oneup-backlight_1.0.0_all.deb
-sudo apt install ./argon-oneup-backlight_1.0.0_all.deb
+wget https://github.com/GamingTux/argon-oneup-suite/releases/download/v1.1.5/argon-oneup-backlight_1.1.0_all.deb
+sudo apt install ./argon-oneup-backlight_1.1.0_all.deb
 ```
 
 ---
