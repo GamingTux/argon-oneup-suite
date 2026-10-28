@@ -62,6 +62,12 @@ if command -v dkms >/dev/null 2>&1; then
     fi
 fi
 
+# Enable I2C1 and load battery overlay at runtime if possible (no reboot required)
+command -v dtparam >/dev/null 2>&1 && dtparam i2c_arm=on 2>/dev/null || true
+if [ -n "$BOOT_DIR" ] && [ -f "$BOOT_DIR/overlays/argon-oneup-battery.dtbo" ] && [ ! -e /sys/bus/i2c/devices/1-0064 ]; then
+    command -v dtoverlay >/dev/null 2>&1 && dtoverlay "$BOOT_DIR/overlays/argon-oneup-battery.dtbo" 2>/dev/null || true
+fi
+
 # Load i2c-dev if available
 modprobe i2c-dev 2>/dev/null || true
 
@@ -73,6 +79,8 @@ if [ ! -e /sys/bus/i2c/devices/1-0064 ] && [ -d /sys/bus/i2c/devices/i2c-1 ]; th
     echo "oneup-battery 0x64" > /sys/bus/i2c/devices/i2c-1/new_device 2>/dev/null || true
     echo "[argon-oneup-battery] Triggered I2C probe for CW2217 at address 0x64"
 fi
+
+systemctl try-restart upower.service 2>/dev/null || true
 
 echo "[argon-oneup-battery] Battery driver and power supply integration installed successfully."
 exit 0

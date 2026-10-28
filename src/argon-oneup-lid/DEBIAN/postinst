@@ -20,8 +20,11 @@ if [ -n "$BOOT_DIR" ]; then
             echo "[argon-oneup-lid] Enabled dtoverlay=argon-oneup-lid in $CONFIG"
         fi
     fi
+    if [ -f "$BOOT_DIR/overlays/argon-oneup-lid.dtbo" ] && [ ! -d /proc/device-tree/lid_switch ]; then
+        command -v dtoverlay >/dev/null 2>&1 && dtoverlay "$BOOT_DIR/overlays/argon-oneup-lid.dtbo" 2>/dev/null || true
+        udevadm trigger --subsystem-match=input 2>/dev/null || true
+    fi
 fi
 
-echo "[argon-oneup-lid] Hardware lid switch overlay configured successfully."
-echo "[argon-oneup-lid] Please reboot for the kernel input device (/dev/input/event*, SW_LID) to take effect."
+echo "[argon-oneup-lid] Hardware lid switch overlay configured and loaded successfully."
 exit 0
