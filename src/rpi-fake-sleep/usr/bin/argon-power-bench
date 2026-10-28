@@ -422,6 +422,12 @@ def run_benchmark(duration=60):
         set_wifi_power_save(False)
         set_cgroups_frozen(freeze=False)
         set_keyboard_power(enable=True)
+        if os.path.exists("/sys/bus/usb/devices/1-1.1/1-1.1:1.3") and not os.path.exists("/sys/bus/usb/drivers/usbhid/1-1.1:1.3"):
+            try:
+                with open("/sys/bus/usb/drivers/usbhid/bind", "w") as f:
+                    f.write("1-1.1:1.3")
+            except Exception:
+                pass
         set_dpms("on")
         if os.path.isfile(f"{BL_PATH}/brightness"):
             with open(f"{BL_PATH}/brightness", "w") as f:
