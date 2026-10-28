@@ -25,14 +25,14 @@ Die Suite ist modular in **8 eigenständige Debian-Pakete** aufgeteilt. Jedes Pa
 | [**`argon-oneup-sensors`**](src/argon-oneup-sensors) | `arm64` | Leitet alle physischen Hardware-Sensoren (CPU-Temperatur, PWM-Lüfterdrehzahl, NVMe-Temperatur, Akku-Telemetrie) standardkonform über `lm-sensors` weiter. Behebt zudem den KDE Plasma 6 `ksystemstats` ARM64 Deadlock ([KDE Bug #493093](https://bugs.kde.org/show_bug.cgi?id=493093)). |
 | [**`argon-power-profiles`**](src/argon-power-profiles) | `all` | Drop-in Ersatz für den `power-profiles-daemon` auf ARM64/Raspberry Pi. Stellt D-Bus-APIs für KDE/GNOME bereit und regelt dynamisch CPU-Governors (1.5 GHz bis Max), WLAN-Energiesparmodus und Backlight-Profile (*Quiet*, *Balanced*, *Performance*). |
 | [**`cm5-mmc-fix`**](src/cm5-mmc-fix) | `all` | Behebt den 30–80 Sekunden langen Shutdown/Reboot-Hang auf dem Raspberry Pi CM5 Lite bei leerem MicroSD-Slot (BCM2712 SDHCI Hardware-Timeout Bug). |
-| [**`rpi-fake-sleep`**](src/rpi-fake-sleep) | `all` | Universeller Standby/Ruhezustand-Manager für Raspberry Pi. Friert Prozesse über cgroups v2 ein, taktet die CPU herunter, schaltet das Display ab und weckt das System blitzschnell bei Tastendruck oder Deckelöffnen auf. |
+| [**`rpi-fake-sleep`**](src/rpi-fake-sleep) | `all` | Universeller Standby/Ruhezustand-Manager für Raspberry Pi. Friert Prozesse über cgroups v2 ein, parkt die Kerne C1–C3 per Single-Core-`cpuset`/Workqueue-Pinning dauerhaft im Hardware-`WFI` (sodass nur `C0` für das Aufwach-Event zuständig bleibt), taktet die CPU herunter, schaltet Display & Tastatur-USB-Strom ab und weckt das System in <1 ms bei Tastendruck oder Deckelöffnen auf. |
 | [**`argon-oneup-suite`**](src/argon-oneup-suite) | `all` | **Metapaket:** Installiert mit einem einzigen Befehl alle oben genannten Pakete als gemeinsame Gesamtsuite. |
 
 ---
 
 ## 🚀 Installation
 
-Alle Pakete stehen im [**aktuellen GitHub Release (v1.1.9)**](https://github.com/GamingTux/argon-oneup-suite/releases/latest) zum Download bereit.
+Alle Pakete stehen im [**aktuellen GitHub Release (v1.2.0)**](https://github.com/GamingTux/argon-oneup-suite/releases/latest) zum Download bereit.
 
 ### Option A: Gesamte Suite installieren (Empfohlen)
 
@@ -52,15 +52,15 @@ Wenn du nur bestimmte Funktionen (z. B. das KDE Plasma Dashboard, die Akkuanzeig
 
 ```bash
 # Beispiel: KDE Plasma 6 Dashboard Widget installieren
-wget https://github.com/GamingTux/argon-oneup-suite/releases/download/v1.1.9/argon-oneup-plasma-widget_1.1.9_arm64.deb
+wget https://github.com/GamingTux/argon-oneup-suite/releases/download/v1.2.0/argon-oneup-plasma-widget_1.1.9_arm64.deb
 sudo apt install ./argon-oneup-plasma-widget_1.1.9_arm64.deb
 
 # Beispiel: Nur Akku-Treiber installieren
-wget https://github.com/GamingTux/argon-oneup-suite/releases/download/v1.1.9/argon-oneup-battery_1.1.8_all.deb
+wget https://github.com/GamingTux/argon-oneup-suite/releases/download/v1.2.0/argon-oneup-battery_1.1.8_all.deb
 sudo apt install ./argon-oneup-battery_1.1.8_all.deb
 
 # Beispiel: Nur Helligkeits-Treiber installieren
-wget https://github.com/GamingTux/argon-oneup-suite/releases/download/v1.1.9/argon-oneup-backlight_1.1.0_all.deb
+wget https://github.com/GamingTux/argon-oneup-suite/releases/download/v1.2.0/argon-oneup-backlight_1.1.0_all.deb
 sudo apt install ./argon-oneup-backlight_1.1.0_all.deb
 ```
 

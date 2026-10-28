@@ -394,10 +394,49 @@ def apply_power_saving():
             except Exception:
                 pass
 
+    # 3. Single-Core WFI Parking (Pin all cgroup slices & kernel workqueues to CPU0)
+    # Note: On BCM2712 (RPi 5 / CM5), armstub8-2712.bin implements PSCI_CPU_OFF but lacks
+    # PSCI_CPU_ON (offlined cores cannot come back online without a reboot).
+    # Instead, we pin cgroups v2 slices and unbound kernel workqueues to CPU0 so
+    # CPU1..CPU3 remain permanently in hardware WFI (0 MHz) during standby and resume in <1ms.
+    try:
+        if os.path.isfile("/sys/fs/cgroup/cgroup.subtree_control"):
+            with open("/sys/fs/cgroup/cgroup.subtree_control", "w") as f:
+                f.write("+cpuset")
+        for cg in ("/sys/fs/cgroup/user.slice", "/sys/fs/cgroup/system.slice", "/sys/fs/cgroup/init.scope"):
+            cpuset_file = os.path.join(cg, "cpuset.cpus")
+            if os.path.isfile(cpuset_file):
+                with open(cpuset_file, "w") as f:
+                    f.write("0")
+        if os.path.isfile("/sys/devices/virtual/workqueue/cpumask"):
+            with open("/sys/devices/virtual/workqueue/cpumask", "w") as f:
+                f.write("1")
+        os.sched_setaffinity(0, {0})
+    except Exception:
+        pass
+
     return saved_cpu_state
 
 def restore_power(saved_cpu_state):
     """Unfreezes applications and restores normal CPU clock."""
+    # 0. Restore Multi-Core CPU0..3 scheduling & kernel workqueue affinity
+    try:
+        all_cpus = "0-3"
+        if os.path.isfile("/sys/devices/system/cpu/present"):
+            with open("/sys/devices/system/cpu/present", "r") as f:
+                all_cpus = f.read().strip() or "0-3"
+        for cg in ("/sys/fs/cgroup/user.slice", "/sys/fs/cgroup/system.slice", "/sys/fs/cgroup/init.scope"):
+            cpuset_file = os.path.join(cg, "cpuset.cpus")
+            if os.path.isfile(cpuset_file):
+                with open(cpuset_file, "w") as f:
+                    f.write(all_cpus)
+        if os.path.isfile("/sys/devices/virtual/workqueue/cpumask"):
+            with open("/sys/devices/virtual/workqueue/cpumask", "w") as f:
+                f.write("f")
+        os.sched_setaffinity(0, {0, 1, 2, 3})
+    except Exception:
+        pass
+
     # 1. Unfreeze cgroups v2 user apps
     for uid_dir in glob.glob("/sys/fs/cgroup/user.slice/user-*.slice/user@*.service/app.slice"):
         freeze_path = os.path.join(uid_dir, "cgroup.freeze")
