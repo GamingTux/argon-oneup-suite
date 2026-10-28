@@ -36,20 +36,29 @@ if [ -n "$DKMS_DIR" ] && [ -f "$DKMS_DIR/dkms.conf" ]; then
 fi
 
 if command -v dkms >/dev/null 2>&1; then
-    KVER=$(uname -r)
-    dkms remove -m oneUpPower -v "$DKMS_VER" -k "$KVER" 2>/dev/null || true
+    dkms remove -m oneUpPower -v "$DKMS_VER" --all 2>/dev/null || true
     echo "[argon-oneup-battery] Registering oneUpPower/$DKMS_VER with DKMS..."
     dkms add -m oneUpPower -v "$DKMS_VER" 2>/dev/null || true
-    echo "[argon-oneup-battery] Building oneUpPower/$DKMS_VER for kernel $KVER..."
-    if ! dkms build -m oneUpPower -v "$DKMS_VER" -k "$KVER"; then
-        echo "WARNING: [argon-oneup-battery] DKMS build failed for kernel $KVER." >&2
-        echo "WARNING: Ensure kernel headers are installed: sudo apt install linux-headers-$KVER" >&2
-    else
-        echo "[argon-oneup-battery] Installing oneUpPower/$DKMS_VER module..."
-        dkms install -m oneUpPower -v "$DKMS_VER" -k "$KVER" --force || true
-        if lsmod | grep -q "^oneUpPower"; then
-            modprobe -r oneUpPower 2>/dev/null || true
+
+    BUILT_ANY=0
+    for KBUILD in /lib/modules/*/build; do
+        [ -d "$KBUILD" ] || continue
+        KVER=$(basename "$(dirname "$KBUILD")")
+        echo "[argon-oneup-battery] Building oneUpPower/$DKMS_VER for kernel $KVER..."
+        if dkms build -m oneUpPower -v "$DKMS_VER" -k "$KVER" --force; then
+            echo "[argon-oneup-battery] Installing oneUpPower/$DKMS_VER module for $KVER..."
+            dkms install -m oneUpPower -v "$DKMS_VER" -k "$KVER" --force || true
+            depmod -a "$KVER" 2>/dev/null || true
+            BUILT_ANY=1
         fi
+    done
+
+    if [ "$BUILT_ANY" -eq 0 ]; then
+        KVER=$(uname -r)
+        echo "WARNING: [argon-oneup-battery] No matching kernel headers found (current: $KVER)." >&2
+        echo "WARNING: Ensure kernel headers are installed: sudo apt install linux-headers-$KVER" >&2
+    elif lsmod | grep -q "^oneUpPower"; then
+        modprobe -r oneUpPower 2>/dev/null || true
     fi
 fi
 
