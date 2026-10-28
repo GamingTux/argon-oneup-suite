@@ -779,6 +779,192 @@ def restore_power(saved_cpu_state):
         except Exception:
             pass
 
+def find_pwmfan_hwmon():
+    """Finds the hwmon directory for the Raspberry Pi / Argon PWM fan."""
+    for h in sorted(glob.glob("/sys/class/hwmon/hwmon*")):
+        try:
+            name_file = os.path.join(h, "name")
+            if os.path.isfile(name_file):
+                with open(name_file, "r") as f:
+                    if f.read().strip() == "pwmfan":
+                        return h
+        except Exception:
+            pass
+    return None
+
+def seed_thermal_cooling_state():
+    """
+    Re-evaluates and seeds the pwm-fan thermal cooling device state for the current
+    SoC temperature. Because BCM2712 thermal zones are interrupt-driven on trip-point
+    crossings, restoring pwm1_enable=2 after manual fan-off in sleep can leave the fan
+    stuck at state 0 if the temperature is already between two trip points.
+    """
+    try:
+        temp_file = "/sys/class/thermal/thermal_zone0/temp"
+        if not os.path.isfile(temp_file):
+            return
+        with open(temp_file, "r") as f:
+            cur_temp = int(f.read().strip())
+
+        active_trips = []
+        for tp_type in sorted(glob.glob("/sys/class/thermal/thermal_zone0/trip_point_*_type")):
+            try:
+                with open(tp_type, "r") as f:
+                    t_type = f.read().strip()
+                if t_type == "active":
+                    tp_temp_file = tp_type.replace("_type", "_temp")
+                    with open(tp_temp_file, "r") as f:
+                        tp_temp = int(f.read().strip())
+                    if tp_temp > 0:
+                        active_trips.append(tp_temp)
+            except Exception:
+                pass
+
+        active_trips.sort()
+        if not active_trips:
+            active_trips = [45000, 55000, 65000, 75000]
+
+        target_state = 0
+        for idx, trip_temp in enumerate(active_trips, start=1):
+            if cur_temp >= trip_temp:
+                target_state = idx
+
+        for cdev in glob.glob("/sys/class/thermal/cooling_device*"):
+            try:
+                type_file = os.path.join(cdev, "type")
+                if os.path.isfile(type_file):
+                    with open(type_file, "r") as f:
+                        if "fan" not in f.read().strip().lower():
+                            continue
+                max_st_file = os.path.join(cdev, "max_state")
+                cur_st_file = os.path.join(cdev, "cur_state")
+                if os.path.isfile(cur_st_file):
+                    max_st = 4
+                    if os.path.isfile(max_st_file):
+                        with open(max_st_file, "r") as f:
+                            max_st = int(f.read().strip())
+                    with open(cur_st_file, "w") as f:
+                        f.write(str(min(target_state, max_st)))
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+def set_fan_sleep_mode(sleep: bool, saved_state=None):
+    """
+    Stops the PWM fan during sleep for 0 dB silent standby, and restores automatic
+    kernel thermal control + seeds cooling_device0 state on wakeup.
+    """
+    hwmon = find_pwmfan_hwmon()
+    if not hwmon:
+        return None
+    en_file = os.path.join(hwmon, "pwm1_enable")
+    pwm_file = os.path.join(hwmon, "pwm1")
+    if sleep:
+        state = {"hwmon": hwmon, "pwm1_enable": "2", "watchdog_active": False}
+        try:
+            if os.path.isfile(en_file):
+                with open(en_file, "r") as f:
+                    state["pwm1_enable"] = f.read().strip() or "2"
+                with open(en_file, "w") as f:
+                    f.write("1")
+            if os.path.isfile(pwm_file):
+                with open(pwm_file, "w") as f:
+                    f.write("0")
+        except Exception:
+            pass
+        return state
+    else:
+        try:
+            prev_en = "2"
+            if isinstance(saved_state, dict):
+                prev_en = saved_state.get("pwm1_enable", "2")
+                if prev_en not in ("1", "2"):
+                    prev_en = "2"
+            if os.path.isfile(en_file):
+                with open(en_file, "w") as f:
+                    f.write(prev_en)
+            if prev_en == "2":
+                seed_thermal_cooling_state()
+        except Exception:
+            pass
+        return None
+
+def check_fan_thermal_watchdog(saved_fan_state, threshold_mc=68000):
+    """
+    Built-in thermal safety watchdog during sleep: if SoC temperature exceeds
+    threshold_mc (default 68°C) while sleeping, re-enables automatic thermal fan control.
+    """
+    if not isinstance(saved_fan_state, dict):
+        return
+    try:
+        temp_file = "/sys/class/thermal/thermal_zone0/temp"
+        if not os.path.isfile(temp_file):
+            return
+        with open(temp_file, "r") as f:
+            cur_temp = int(f.read().strip())
+        hwmon = saved_fan_state.get("hwmon") or find_pwmfan_hwmon()
+        if not hwmon:
+            return
+        en_file = os.path.join(hwmon, "pwm1_enable")
+        pwm_file = os.path.join(hwmon, "pwm1")
+        if cur_temp >= threshold_mc and not saved_fan_state.get("watchdog_active"):
+            log(f"Thermal watchdog: SoC temp {cur_temp / 1000.0:.1f}C >= {threshold_mc / 1000.0:.1f}C in sleep, enabling fan")
+            if os.path.isfile(en_file):
+                with open(en_file, "w") as f:
+                    f.write("2")
+            seed_thermal_cooling_state()
+            saved_fan_state["watchdog_active"] = True
+        elif cur_temp < (threshold_mc - 10000) and saved_fan_state.get("watchdog_active"):
+            if os.path.isfile(en_file):
+                with open(en_file, "w") as f:
+                    f.write("1")
+            if os.path.isfile(pwm_file):
+                with open(pwm_file, "w") as f:
+                    f.write("0")
+            saved_fan_state["watchdog_active"] = False
+    except Exception:
+        pass
+
+def set_sd_slot_sleep_power(sleep: bool, saved_sd_drv=None):
+    """
+    Powers down the empty SDHCI slot controller (1000fff000.mmc) during sleep to save
+    ~70-120 mW on the vcc-sd rail when the system runs from NVMe/USB and no SD card
+    is present. Skips unbinding if an SD card (/dev/mmcblk0) is inserted so wakeup
+    does not trigger removable-media hotplug notifications in the desktop environment.
+    """
+    sd_dev = "1000fff000.mmc"
+    if sleep:
+        if os.path.exists("/dev/mmcblk0"):
+            return None
+        try:
+            with open("/proc/mounts", "r") as f:
+                if "mmcblk" in f.read():
+                    return None
+        except Exception:
+            return None
+        for d in glob.glob(f"/sys/bus/platform/drivers/*/{sd_dev}"):
+            if os.path.exists(d):
+                drv_dir = os.path.dirname(d)
+                unbind_file = os.path.join(drv_dir, "unbind")
+                try:
+                    with open(unbind_file, "w") as f:
+                        f.write(sd_dev)
+                    return drv_dir
+                except Exception:
+                    pass
+        return None
+    else:
+        if saved_sd_drv and os.path.isdir(saved_sd_drv):
+            bind_file = os.path.join(saved_sd_drv, "bind")
+            if os.path.isfile(bind_file) and not os.path.exists(os.path.join(saved_sd_drv, sd_dev)):
+                try:
+                    with open(bind_file, "w") as f:
+                        f.write(sd_dev)
+                except Exception:
+                    pass
+        return None
+
 def sig_handler(signum, frame):
     raise KeyboardInterrupt()
 
@@ -840,13 +1026,15 @@ def main():
     # 4. Freeze apps & throttle CPU
     saved_cpu_state = apply_power_saving()
 
-    # 5. Radio & Audio power savings
+    # 5. Radio, Audio, Fan & empty SD-slot power savings
     if cfg.get("ENABLE_AUDIO_AUTOSUSPEND", True):
         set_audio_autosuspend()
     if cfg.get("SUSPEND_WIFI_POWERSAVE", True):
         set_wifi_power_save(True)
     if cfg.get("SUSPEND_BLUETOOTH_BLOCK", True) and not saved_bt_blocked:
         set_bluetooth_power(False)
+    saved_fan_state = set_fan_sleep_mode(True)
+    saved_sd_drv = set_sd_slot_sleep_power(True)
 
     # 6. Turn off keyboard backlight & USB power in sleep if configured
     kbd_mode = cfg.get("DISABLE_KEYBOARD_IN_SLEEP", "always")
@@ -878,10 +1066,11 @@ def main():
                 log("Lid opened (poll check) -> waking up")
                 break
 
-            # Periodic check for battery loss while closed on battery (every 30s)
+            # Periodic check for thermal safety & battery loss while sleeping (every 30s)
             now = time.time()
             if (now - last_battery_check) >= 30.0:
                 last_battery_check = now
+                check_fan_thermal_watchdog(saved_fan_state)
 
                 # Dynamic battery loss protection (only when closed on battery)
                 if lid_was_closed and not is_on_ac():
@@ -970,6 +1159,8 @@ def main():
         # 1. Unfreeze user apps and restore multi-core CPU clock FIRST so Wayland
         # clients (Firefox, etc.) are awake BEFORE KWin turns display DPMS back on
         restore_power(saved_cpu_state)
+        set_fan_sleep_mode(False, saved_fan_state)
+        set_sd_slot_sleep_power(False, saved_sd_drv)
         time.sleep(0.05)
 
         # 2. Restore displays (DPMS On & brightness)
