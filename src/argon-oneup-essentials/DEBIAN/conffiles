@@ -17,6 +17,7 @@
 /etc/X11/xorg.conf.d/50-touchpad-tapping.conf
 /etc/X11/xorg.conf.d/99-v3d.conf
 /etc/xdg/kcminputrc
+/etc/xdg/kdeglobals
 /etc/xdg/ddcutil/ddcutilrc
 /etc/ddcutil/ddcutilrc
 /etc/systemd/system/fstrim.timer.d/acpower.conf

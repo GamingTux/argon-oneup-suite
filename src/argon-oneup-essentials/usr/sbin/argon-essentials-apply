@@ -94,6 +94,17 @@ if [ -f /etc/xdg/labwc/rc.xml ] && ! grep -q "XF86MonBrightnessUp" /etc/xdg/labw
     pkill -HUP labwc 2>/dev/null || true
 fi
 
+# Enable Subpixel RGB Font Rendering & LCD Filter for crisp text on the 14" BOE IPS panel
+if [ -d /etc/fonts/conf.d ] && [ -d /usr/share/fontconfig/conf.avail ]; then
+    rm -f /etc/fonts/conf.d/10-sub-pixel-none.conf 2>/dev/null || true
+    if [ -f /usr/share/fontconfig/conf.avail/10-sub-pixel-rgb.conf ]; then
+        ln -sf /usr/share/fontconfig/conf.avail/10-sub-pixel-rgb.conf /etc/fonts/conf.d/10-sub-pixel-rgb.conf 2>/dev/null || true
+    fi
+    if [ -f /usr/share/fontconfig/conf.avail/11-lcdfilter-default.conf ]; then
+        ln -sf /usr/share/fontconfig/conf.avail/11-lcdfilter-default.conf /etc/fonts/conf.d/11-lcdfilter-default.conf 2>/dev/null || true
+    fi
+fi
+
 # Apply runtime optimizations immediately where possible
 modprobe tcp_bbr 2>/dev/null || true
 sysctl --system >/dev/null 2>&1 || true
