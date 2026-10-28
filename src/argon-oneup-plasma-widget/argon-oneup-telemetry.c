@@ -1,10 +1,13 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdint.h>
 #include <string.h>
 #include <unistd.h>
+#include <fcntl.h>
 #include <dirent.h>
 #include <mntent.h>
 #include <sys/statvfs.h>
+#include <sys/ioctl.h>
 #include <time.h>
 #include <sys/time.h>
 
@@ -29,6 +32,7 @@ typedef struct {
     char governor[32];
 
     int gpu_percent;
+    int gpu_mhz;
     char gpu_name[32];
 
     int bat_present;
@@ -190,6 +194,33 @@ static int get_gpu_load(void) {
     return percent;
 }
 
+static int get_gpu_mhz(void) {
+    int fd = open("/dev/vcio_gencmd", O_RDONLY);
+    if (fd < 0) fd = open("/dev/vcio", O_RDONLY);
+    if (fd < 0) return 0;
+
+    uint32_t buf[1031];
+    memset(buf, 0, sizeof(buf));
+    buf[0] = sizeof(buf);
+    buf[1] = 0;
+    buf[2] = 0x00030080;
+    buf[3] = 1024;
+    buf[4] = 0;
+    buf[5] = 0;
+    strcpy((char *)&buf[6], "measure_clock v3d");
+
+    int mhz = 0;
+    if (ioctl(fd, 0xc0086400UL, buf) == 0) {
+        const char *eq = strchr((const char *)&buf[6], '=');
+        if (eq) {
+            unsigned long long hz = strtoull(eq + 1, NULL, 10);
+            mhz = (int)((hz + 500000ULL) / 1000000ULL);
+        }
+    }
+    close(fd);
+    return mhz;
+}
+
 static void collect_disks(Telemetry *t) {
     FILE *f = setmntent("/proc/mounts", "r");
     if (!f) return;
@@ -223,7 +254,7 @@ static void collect_disks(Telemetry *t) {
                 snprintf(d->icon, sizeof(d->icon), "drive-harddisk");
             } else if (strncmp(ent->mnt_fsname, "/dev/mmcblk", 11) == 0) {
                 snprintf(d->name, sizeof(d->name), "SD-Karte");
-                snprintf(d->icon, sizeof(d->icon), "media-flash-sd");
+                snprintf(d->icon, sizeof(d->icon), "media-flash-sd-mmc");
             } else if (strncmp(ent->mnt_fsname, "/dev/sd", 7) == 0) {
                 const char *base = strrchr(ent->mnt_dir, '/');
                 if (base && strlen(base) > 1 && strcmp(ent->mnt_dir, "/media") != 0) {
@@ -265,8 +296,9 @@ static void collect_telemetry(Telemetry *t) {
     t->cpu_temp_c = read_int("/sys/class/thermal/thermal_zone0/temp", 0) / 1000.0f;
     read_str("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor", t->governor, sizeof(t->governor), "ondemand");
 
-    // 2. GPU Load (V3D)
+    // 2. GPU Load & Clock (V3D)
     t->gpu_percent = get_gpu_load();
+    t->gpu_mhz = get_gpu_mhz();
     snprintf(t->gpu_name, sizeof(t->gpu_name), "VideoCore VII (V3D)");
 
     // 3. Fan & NVMe Hwmon
@@ -378,6 +410,7 @@ static void print_json(const Telemetry *t) {
     printf("  },\n");
     printf("  \"gpu\": {\n");
     printf("    \"percent\": %d,\n", t->gpu_percent);
+    printf("    \"mhz\": %d,\n", t->gpu_mhz);
     printf("    \"name\": \"%s\"\n", t->gpu_name);
     printf("  },\n");
     printf("  \"battery\": {\n");
@@ -454,8 +487,10 @@ static void print_dashboard(const Telemetry *t) {
              t->cores_load[0], t->cores_load[1], t->cores_load[2], t->cores_load[3], t->cores_mhz[0]);
     printf("%s%s║%s  %sCPU:%s     %-44s (Max: %d MHz) %s%s║%s\n",
            BOLD, CYAN, RESET, BOLD, RESET, cores_buf, t->max_mhz, BOLD, CYAN, RESET);
-    printf("%s%s║%s  %sGPU:%s     %-25s  Auslastung: %2d%%   Governor: %-10s  %s%s║%s\n",
-           BOLD, CYAN, RESET, BOLD, RESET, t->gpu_name, t->gpu_percent, t->governor, BOLD, CYAN, RESET);
+    char gpu_buf[64];
+    snprintf(gpu_buf, sizeof(gpu_buf), "%s @ %d MHz", t->gpu_name, t->gpu_mhz);
+    printf("%s%s║%s  %sGPU:%s     %-32s Auslastung: %2d%%  Gov: %-9s %s%s║%s\n",
+           BOLD, CYAN, RESET, BOLD, RESET, gpu_buf, t->gpu_percent, t->governor, BOLD, CYAN, RESET);
     printf("%s%s╠════════════════════════════════════════════════════════════════════════════╣%s\n", BOLD, CYAN, RESET);
 
     // Battery

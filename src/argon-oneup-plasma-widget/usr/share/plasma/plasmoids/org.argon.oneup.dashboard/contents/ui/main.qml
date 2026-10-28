@@ -25,6 +25,7 @@ PlasmoidItem {
         },
         "gpu": {
             "percent": 0,
+            "mhz": 650,
             "name": "VideoCore VII (V3D)"
         },
         "battery": {
@@ -69,12 +70,12 @@ PlasmoidItem {
 
     function getBatteryIcon() {
         if (!root.telemetry.battery.present) return "battery-missing"
-        if (root.telemetry.battery.ac_online) return "battery-charging"
         var cap = root.telemetry.battery.capacity
-        if (cap > 80) return "battery-good"
-        if (cap > 30) return "battery"
-        if (cap > 15) return "battery-caution"
-        return "battery-low"
+        var suffix = root.telemetry.battery.ac_online ? "-charging" : ""
+        if (cap > 90) return "battery-full" + suffix
+        if (cap > 35) return "battery-good" + suffix
+        if (cap > 15) return "battery-caution" + suffix
+        return "battery-low" + suffix
     }
 
     // Data Source using executable engine
@@ -256,7 +257,7 @@ PlasmoidItem {
                     }
                 }
 
-                // GPU Load Row
+                // GPU Load & Clock Row
                 RowLayout {
                     Layout.fillWidth: true
                     spacing: 6
@@ -269,10 +270,10 @@ PlasmoidItem {
                     }
 
                     QQC2.Label {
-                        text: "GPU (V3D):"
+                        text: "GPU (" + (root.telemetry.gpu ? root.telemetry.gpu.percent : 0) + "%):"
                         font.pointSize: Kirigami.Theme.smallFont.pointSize
                         opacity: 0.8
-                        Layout.minimumWidth: 65
+                        Layout.minimumWidth: 68
                     }
 
                     QQC2.ProgressBar {
@@ -283,7 +284,7 @@ PlasmoidItem {
                     }
 
                     QQC2.Label {
-                        text: (root.telemetry.gpu ? root.telemetry.gpu.percent : 0) + " %"
+                        text: (root.telemetry.gpu && root.telemetry.gpu.mhz ? root.telemetry.gpu.mhz : 650) + " MHz"
                         font.pointSize: Kirigami.Theme.smallFont.pointSize
                         font.family: "monospace"
                         Layout.minimumWidth: 55
@@ -311,10 +312,18 @@ PlasmoidItem {
                         opacity: 0.8
                     }
                     Item { Layout.fillWidth: true }
-                    QQC2.Label {
-                        text: root.telemetry.battery.ac_online ? "🔌 Netzteil verbunden" : "🔋 Akkubetrieb"
-                        font.pointSize: Kirigami.Theme.smallFont.pointSize
-                        color: root.telemetry.battery.ac_online ? Kirigami.Theme.positiveTextColor : Kirigami.Theme.textColor
+                    RowLayout {
+                        spacing: 4
+                        Kirigami.Icon {
+                            source: root.getBatteryIcon()
+                            implicitWidth: Kirigami.Units.iconSizes.small
+                            implicitHeight: Kirigami.Units.iconSizes.small
+                        }
+                        QQC2.Label {
+                            text: root.telemetry.battery.ac_online ? "Netzteil verbunden" : "Akkubetrieb"
+                            font.pointSize: Kirigami.Theme.smallFont.pointSize
+                            color: root.telemetry.battery.ac_online ? Kirigami.Theme.positiveTextColor : Kirigami.Theme.textColor
+                        }
                     }
                 }
 
@@ -517,7 +526,7 @@ PlasmoidItem {
                         Layout.fillWidth: true
                         spacing: 6
                         Kirigami.Icon {
-                            source: "battery"
+                            source: "battery-good"
                             implicitWidth: Kirigami.Units.iconSizes.small
                             implicitHeight: Kirigami.Units.iconSizes.small
                         }
@@ -565,7 +574,7 @@ PlasmoidItem {
                         Layout.fillWidth: true
                         spacing: 6
                         Kirigami.Icon {
-                            source: "input-fan"
+                            source: "speedometer"
                             implicitWidth: Kirigami.Units.iconSizes.small
                             implicitHeight: Kirigami.Units.iconSizes.small
                         }
