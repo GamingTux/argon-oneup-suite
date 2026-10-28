@@ -9,7 +9,7 @@ modprobe ddcci-backlight 2>/dev/null || true
 sleep 0.2
 
 BUS_NUM=""
-for conn in /sys/class/drm/card*-HDMI-A-*/ddc; do
+for conn in /sys/class/drm/card*-HDMI-A-2/ddc /sys/class/drm/card*-HDMI-A-*/ddc; do
     [ -e "$conn" ] || continue
     STATUS_FILE="$(dirname "$conn")/status"
     if [ -f "$STATUS_FILE" ] && [ "$(cat "$STATUS_FILE" 2>/dev/null)" = "connected" ]; then
