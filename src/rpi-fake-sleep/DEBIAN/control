@@ -1,5 +1,5 @@
 Package: rpi-fake-sleep
-Version: 1.1.0
+Version: 1.1.3
 Architecture: all
 Maintainer: GamingTux <gamingtux@users.noreply.github.com>
 Section: admin

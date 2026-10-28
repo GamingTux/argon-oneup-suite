@@ -354,26 +354,41 @@ def apply_power_saving():
                 pass
 
     # 2. Throttle CPU governor to powersave and minimum clock
+    # Note: On RPi 5 / CM5, cpu0..cpu3/cpufreq are symlinks to shared ../cpufreq/policy0.
+    # Deduplicate via realpath so writing to policy0 does not corrupt subsequent reads.
     saved_cpu_state = {}
-    for cpu in glob.glob("/sys/devices/system/cpu/cpu[0-9]*/cpufreq"):
-        gov_path = os.path.join(cpu, "scaling_governor")
-        min_path = os.path.join(cpu, "cpuinfo_min_freq")
-        max_path = os.path.join(cpu, "scaling_max_freq")
+    seen_policies = set()
+    for cpu in sorted(glob.glob("/sys/devices/system/cpu/cpu[0-9]*/cpufreq")):
+        real_policy = os.path.realpath(cpu)
+        if real_policy in seen_policies:
+            continue
+        seen_policies.add(real_policy)
+
+        gov_path = os.path.join(real_policy, "scaling_governor")
+        min_path = os.path.join(real_policy, "cpuinfo_min_freq")
+        max_path = os.path.join(real_policy, "scaling_max_freq")
+        maxinfo_path = os.path.join(real_policy, "cpuinfo_max_freq")
         if os.path.isfile(gov_path):
             try:
                 gov = "ondemand"
                 with open(gov_path, "r") as f:
                     gov = f.read().strip()
+                min_freq = None
+                if os.path.isfile(min_path):
+                    with open(min_path, "r") as f:
+                        min_freq = f.read().strip()
                 max_freq = None
                 if os.path.isfile(max_path):
                     with open(max_path, "r") as f:
                         max_freq = f.read().strip()
-                saved_cpu_state[cpu] = {"gov": gov, "max_freq": max_freq}
+                if (not max_freq or max_freq == min_freq) and os.path.isfile(maxinfo_path):
+                    with open(maxinfo_path, "r") as f:
+                        max_freq = f.read().strip()
+                saved_cpu_state[real_policy] = {"gov": gov, "max_freq": max_freq}
 
-                with open(min_path, "r") as f:
-                    min_freq = f.read().strip()
-                with open(max_path, "w") as f:
-                    f.write(min_freq)
+                if min_freq and os.path.isfile(max_path):
+                    with open(max_path, "w") as f:
+                        f.write(min_freq)
                 with open(gov_path, "w") as f:
                     f.write("powersave")
             except Exception:
@@ -393,21 +408,35 @@ def restore_power(saved_cpu_state):
             except Exception:
                 pass
 
-    # 2. Restore CPU clock and governors
-    for cpu in glob.glob("/sys/devices/system/cpu/cpu[0-9]*/cpufreq"):
-        gov_path = os.path.join(cpu, "scaling_governor")
-        max_path = os.path.join(cpu, "scaling_max_freq")
-        maxinfo_path = os.path.join(cpu, "cpuinfo_max_freq")
+    # 2. Restore CPU clock and governors (deduplicated per cpufreq policy)
+    seen_policies = set()
+    for cpu in sorted(glob.glob("/sys/devices/system/cpu/cpu[0-9]*/cpufreq")):
+        real_policy = os.path.realpath(cpu)
+        if real_policy in seen_policies:
+            continue
+        seen_policies.add(real_policy)
+
+        gov_path = os.path.join(real_policy, "scaling_governor")
+        min_path = os.path.join(real_policy, "cpuinfo_min_freq")
+        max_path = os.path.join(real_policy, "scaling_max_freq")
+        maxinfo_path = os.path.join(real_policy, "cpuinfo_max_freq")
         try:
-            state = saved_cpu_state.get(cpu, {}) if isinstance(saved_cpu_state, dict) else {}
+            state = {}
+            if isinstance(saved_cpu_state, dict):
+                state = saved_cpu_state.get(real_policy) or saved_cpu_state.get(cpu) or {}
             if isinstance(state, dict):
                 gov = state.get("gov", "ondemand")
                 top_freq = state.get("max_freq")
             else:
-                gov = saved_cpu_state.get(gov_path, "ondemand")
+                gov = saved_cpu_state.get(gov_path, "ondemand") if isinstance(saved_cpu_state, dict) else "ondemand"
                 top_freq = None
 
-            if not top_freq and os.path.isfile(maxinfo_path):
+            min_freq = None
+            if os.path.isfile(min_path):
+                with open(min_path, "r") as f:
+                    min_freq = f.read().strip()
+
+            if (not top_freq or top_freq == min_freq) and os.path.isfile(maxinfo_path):
                 with open(maxinfo_path, "r") as f:
                     top_freq = f.read().strip()
 

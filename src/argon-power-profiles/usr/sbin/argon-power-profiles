@@ -33,9 +33,25 @@ GOVERNOR_MAP = {
 
 def apply_governor(profile):
     gov = GOVERNOR_MAP.get(profile, "ondemand")
-    for f in glob.glob("/sys/devices/system/cpu/cpu*/cpufreq/scaling_governor"):
+    seen_policies = set()
+    for cpu in sorted(glob.glob("/sys/devices/system/cpu/cpu[0-9]*/cpufreq")):
+        real_policy = os.path.realpath(cpu)
+        if real_policy in seen_policies:
+            continue
+        seen_policies.add(real_policy)
+        maxinfo_path = os.path.join(real_policy, "cpuinfo_max_freq")
+        max_path = os.path.join(real_policy, "scaling_max_freq")
+        gov_path = os.path.join(real_policy, "scaling_governor")
         try:
-            with open(f, "w") as fp:
+            if os.path.isfile(maxinfo_path) and os.path.isfile(max_path):
+                with open(maxinfo_path, "r") as fp:
+                    top_freq = fp.read().strip()
+                with open(max_path, "w") as fp:
+                    fp.write(top_freq)
+        except OSError:
+            pass
+        try:
+            with open(gov_path, "w") as fp:
                 fp.write(gov)
         except OSError:
             pass
