@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import sys, os, glob, json, time, subprocess
+import sys, os, glob, json, time, signal, grp, pwd, subprocess
 import dbus
 import dbus.service
 import dbus.mainloop.glib
@@ -206,9 +206,23 @@ class ProfileManager:
     def active_profile(self):
         return self.config["active_profile"]
 
-    def set_active_profile(self, profile):
+    def sync_current_brightness(self):
+        if time.time() < self.ignore_brightness_until:
+            return
+        cur = read_current_brightness()
+        if cur is not None and cur >= 5:
+            stored = self.config["brightness"].get(self.active_profile, 70)
+            if cur != stored:
+                print(f"[power-profiles] Saved brightness {cur}% for profile '{self.active_profile}' (was {stored}%)")
+                self.config["brightness"][self.active_profile] = cur
+                self.save_config()
+
+    def set_active_profile(self, profile, initial=False):
         if profile not in GOVERNOR_MAP:
             return
+
+        if not initial and profile != self.config["active_profile"]:
+            self.sync_current_brightness()
 
         self.config["active_profile"] = profile
         self.save_config()
@@ -226,21 +240,6 @@ class ProfileManager:
         }, signature=dbus.Signature("sv"))
         for srv in self.services:
             srv.PropertiesChanged(srv.interface_name, changed, dbus.Array([], signature=dbus.Signature("s")))
-
-    def check_brightness(self):
-        now = time.time()
-        if now < self.ignore_brightness_until:
-            return True
-
-        cur = read_current_brightness()
-        if cur is not None and cur >= 5:
-            stored = self.config["brightness"].get(self.active_profile, 70)
-            if cur != stored:
-                print(f"[power-profiles] User changed brightness to {cur}% (profile '{self.active_profile}' updated from {stored}%)")
-                self.config["brightness"][self.active_profile] = cur
-                self.save_config()
-
-        return True
 
 class PowerProfilesService(dbus.service.Object):
     def __init__(self, bus, path, interface_name, manager):
@@ -293,8 +292,28 @@ class PowerProfilesService(dbus.service.Object):
     def GetAll(self, interface_name):
         return self.get_all_properties(interface_name)
 
-    @dbus.service.method(INTERFACE_PROPS, in_signature="ssv")
-    def Set(self, interface_name, property_name, new_value):
+    def _is_sender_authorized(self, sender):
+        if not sender:
+            return True
+        try:
+            uid = int(self.bus.get_unix_user(sender))
+            if uid == 0 or os.path.isdir(f"/run/user/{uid}"):
+                return True
+            uname = pwd.getpwuid(uid).pw_name
+            for gname in ("sudo", "wheel", "video", "plugdev", "netdev"):
+                try:
+                    if uname in grp.getgrnam(gname).gr_mem:
+                        return True
+                except KeyError:
+                    pass
+        except Exception:
+            pass
+        return False
+
+    @dbus.service.method(INTERFACE_PROPS, in_signature="ssv", sender_keyword="sender")
+    def Set(self, interface_name, property_name, new_value, sender=None):
+        if not self._is_sender_authorized(sender):
+            raise dbus.exceptions.DBusException("Permission denied")
         if property_name == "ActiveProfile":
             val = str(new_value)
             if val in GOVERNOR_MAP:
@@ -340,10 +359,17 @@ if __name__ == "__main__":
     bus.request_name(BUS_NAME_UPOWER)
     bus.request_name(BUS_NAME_HADESS)
 
-    manager.set_active_profile(manager.active_profile)
+    manager.set_active_profile(manager.active_profile, initial=True)
 
-    GLib.timeout_add_seconds(2, manager.check_brightness)
-
-    print("Started Argon ONE UP PowerProfiles Daemon (with Brightness Memory & WiFi Control)!")
     loop = GLib.MainLoop()
+
+    def on_shutdown(*_args):
+        manager.sync_current_brightness()
+        loop.quit()
+        return False
+
+    GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGTERM, on_shutdown)
+    GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGINT, on_shutdown)
+
+    print("Started Argon ONE UP PowerProfiles Daemon (Event-Driven, 0% Idle Overhead)!")
     loop.run()

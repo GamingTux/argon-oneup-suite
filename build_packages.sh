@@ -15,17 +15,24 @@ find "${SRC_DIR}" -type f -name "*~" -delete 2>/dev/null || true
 
 echo "=== Building Argon ONE UP Debian Packages ==="
 
+if [ "$(uname -m)" = "aarch64" ]; then
+    CC_BIN="gcc"
+    STRIP_BIN="strip"
+else
+    CC_BIN="aarch64-linux-gnu-gcc"
+    STRIP_BIN="aarch64-linux-gnu-strip"
+fi
+
 if [ -f "${SRC_DIR}/argon-oneup-plasma-widget/argon-oneup-telemetry.c" ]; then
     echo "Compiling argon-oneup-telemetry binary (C / Cortex-A76)..."
-    if [ "$(uname -m)" = "aarch64" ]; then
-        CC_BIN="gcc"
-        STRIP_BIN="strip"
-    else
-        CC_BIN="aarch64-linux-gnu-gcc"
-        STRIP_BIN="aarch64-linux-gnu-strip"
-    fi
     "${CC_BIN}" -O3 -pipe -mcpu=cortex-a76+crypto+dotprod "${SRC_DIR}/argon-oneup-plasma-widget/argon-oneup-telemetry.c" -o "${SRC_DIR}/argon-oneup-plasma-widget/usr/bin/argon-oneup-telemetry"
     "${STRIP_BIN}" "${SRC_DIR}/argon-oneup-plasma-widget/usr/bin/argon-oneup-telemetry"
+fi
+
+if [ -f "${SRC_DIR}/argon-oneup-sensors/usr/src/ksystemstats-ns-helper.c" ]; then
+    echo "Compiling ksystemstats-ns-helper binary (C / Cortex-A76)..."
+    "${CC_BIN}" -O2 -pipe -Wall -Wextra -mcpu=cortex-a76 "${SRC_DIR}/argon-oneup-sensors/usr/src/ksystemstats-ns-helper.c" -o "${SRC_DIR}/argon-oneup-sensors/usr/bin/ksystemstats-ns-helper"
+    "${STRIP_BIN}" "${SRC_DIR}/argon-oneup-sensors/usr/bin/ksystemstats-ns-helper"
 fi
 
 for pkg in argon-oneup-backlight argon-oneup-battery argon-oneup-lid argon-oneup-sensors argon-oneup-plasma-widget argon-power-profiles cm5-mmc-fix rpi-fake-sleep argon-oneup-suite; do

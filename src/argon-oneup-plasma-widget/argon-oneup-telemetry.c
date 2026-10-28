@@ -7,7 +7,9 @@
 #include <dirent.h>
 #include <mntent.h>
 #include <sys/statvfs.h>
+#include <sys/stat.h>
 #include <sys/ioctl.h>
+#include <sys/wait.h>
 #include <time.h>
 #include <sys/time.h>
 
@@ -90,6 +92,27 @@ static void read_str(const char *path, char *buf, size_t maxlen, const char *def
     fclose(f);
 }
 
+static void sanitize_json_str(char *str) {
+    for (char *p = str; *p; p++) {
+        if (*p == '"' || *p == '\\' || (unsigned char)*p < 0x20) {
+            *p = '_';
+        }
+    }
+}
+
+static FILE *open_shm_state(const char *prefix, const char *mode) {
+    char path[128];
+    snprintf(path, sizeof(path), "/dev/shm/%s_%u", prefix, (unsigned int)geteuid());
+    int flags = (mode[0] == 'w')
+        ? (O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW | O_CLOEXEC)
+        : (O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+    int fd = open(path, flags, 0600);
+    if (fd < 0) return NULL;
+    FILE *fp = fdopen(fd, mode);
+    if (!fp) close(fd);
+    return fp;
+}
+
 static void get_cpu_loads(Telemetry *t) {
     FILE *f = fopen("/proc/stat", "r");
     if (!f) return;
@@ -112,7 +135,7 @@ static void get_cpu_loads(Telemetry *t) {
     fclose(f);
 
     unsigned long long prev_total[4] = {0}, prev_active[4] = {0};
-    FILE *pf = fopen("/dev/shm/argon_cpu_prev", "r");
+    FILE *pf = open_shm_state("argon_cpu_prev", "r");
     if (pf) {
         for (int i = 0; i < 4; i++) {
             if (fscanf(pf, "%llu %llu", &prev_total[i], &prev_active[i]) != 2) {
@@ -139,7 +162,7 @@ static void get_cpu_loads(Telemetry *t) {
     }
     t->total_load = (sum_load + 2) / 4;
 
-    pf = fopen("/dev/shm/argon_cpu_prev", "w");
+    pf = open_shm_state("argon_cpu_prev", "w");
     if (pf) {
         for (int i = 0; i < 4; i++) {
             fprintf(pf, "%llu %llu\n", cur_total[i], cur_active[i]);
@@ -167,7 +190,7 @@ static int get_gpu_load(void) {
     fclose(f);
 
     long long prev_ts = 0, prev_rt = 0;
-    FILE *pf = fopen("/dev/shm/argon_gpu_prev", "r");
+    FILE *pf = open_shm_state("argon_gpu_prev", "r");
     if (pf) {
         if (fscanf(pf, "%lld %lld", &prev_ts, &prev_rt) != 2) {
             prev_ts = 0;
@@ -186,7 +209,7 @@ static int get_gpu_load(void) {
         }
     }
 
-    pf = fopen("/dev/shm/argon_gpu_prev", "w");
+    pf = open_shm_state("argon_gpu_prev", "w");
     if (pf) {
         fprintf(pf, "%lld %lld\n", cur_ts, cur_rt);
         fclose(pf);
@@ -267,6 +290,8 @@ static void collect_disks(Telemetry *t) {
                 snprintf(d->name, sizeof(d->name), "Laufwerk (%s)", ent->mnt_dir);
                 snprintf(d->icon, sizeof(d->icon), "drive-harddisk");
             }
+            sanitize_json_str(d->name);
+            sanitize_json_str(d->mount);
 
             d->total_gb = (double)s.f_blocks * s.f_frsize / (1024.0 * 1024.0 * 1024.0);
             double free_gb = (double)s.f_bavail * s.f_frsize / (1024.0 * 1024.0 * 1024.0);
@@ -540,15 +565,31 @@ int main(int argc, char *argv[]) {
                     fprintf(stderr, "Error: Unknown profile '%s'. Choose: power-saver, balanced, performance\n", prof);
                     return 1;
                 }
-                char cmd[256];
-                snprintf(cmd, sizeof(cmd),
-                    "gdbus call --system --dest net.hadess.PowerProfiles --object-path /net/hadess/PowerProfiles "
-                    "--method org.freedesktop.DBus.Properties.Set net.hadess.PowerProfiles ActiveProfile \"<'%s'>\" > /dev/null 2>&1",
-                    prof);
-                int ret = system(cmd);
-                if (ret == 0) printf("Power profile switched to '%s'.\n", prof);
-                else { fprintf(stderr, "Failed to switch power profile.\n"); return 1; }
-                return 0;
+                char variant_arg[64];
+                snprintf(variant_arg, sizeof(variant_arg), "<'%s'>", prof);
+                pid_t pid = fork();
+                if (pid == 0) {
+                    int null_fd = open("/dev/null", O_WRONLY);
+                    if (null_fd >= 0) {
+                        dup2(null_fd, STDOUT_FILENO);
+                        dup2(null_fd, STDERR_FILENO);
+                        close(null_fd);
+                    }
+                    execl("/usr/bin/gdbus", "gdbus", "call", "--system",
+                          "--dest", "net.hadess.PowerProfiles",
+                          "--object-path", "/net/hadess/PowerProfiles",
+                          "--method", "org.freedesktop.DBus.Properties.Set",
+                          "net.hadess.PowerProfiles", "ActiveProfile", variant_arg,
+                          (char *)NULL);
+                    _exit(127);
+                }
+                int status = 0;
+                if (pid > 0 && waitpid(pid, &status, 0) > 0 && WIFEXITED(status) && WEXITSTATUS(status) == 0) {
+                    printf("Power profile switched to '%s'.\n", prof);
+                    return 0;
+                }
+                fprintf(stderr, "Failed to switch power profile.\n");
+                return 1;
             } else {
                 fprintf(stderr, "Missing profile name\n");
                 return 1;

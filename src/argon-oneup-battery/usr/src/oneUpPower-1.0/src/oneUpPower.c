@@ -28,7 +28,7 @@
 
 #define VERSION_MAJOR   1
 #define VERSION_MINOR   0
-#define VERSION_EDIT    8
+#define VERSION_EDIT    9
 
 #define CELLS_IN_SERIES             3
 #define TOTAL_LIFE_SECONDS          (6 * 60 * 60)
@@ -110,6 +110,7 @@ struct oneup_battery {
 	int voltage_uv;     /* cell voltage in µV */
 	int current_ua;     /* current in µA (+ charging, - discharging) */
 	int temp_dc;        /* temperature in tenths of °C */
+	unsigned int poll_tick; /* tick counter to throttle slow-changing register reads */
 	bool shutdown_triggered; /* true once orderly_poweroff has been called */
 };
 
@@ -220,7 +221,7 @@ static int read_voltage_uv(struct i2c_client *client, int *volt)
  * Stores current in microamperes (µA, + charging, - discharging) into *curr.
  * Returns 0 on success or -errno.
  */
-static int read_current_ua(struct i2c_client *client, int *curr)
+static int read_current_ua(struct i2c_client *client, int *curr, int *raw_hi_out)
 {
 	int c_hi, c_lo;
 	s16 raw_curr;
@@ -229,6 +230,9 @@ static int read_current_ua(struct i2c_client *client, int *curr)
 	c_hi = i2c_smbus_read_byte_data(client, REG_CURRENT_HIGH);
 	if (c_hi < 0)
 		return c_hi;
+
+	if (raw_hi_out)
+		*raw_hi_out = c_hi;
 
 	c_lo = i2c_smbus_read_byte_data(client, REG_CURRENT_LOW);
 	if (c_lo < 0)
@@ -386,21 +390,17 @@ static void set_power_states(struct oneup_battery *bat, int soc)
 }
 
 /*
- * Read the current direction register and update bat->ac_online.
+ * Update bat->ac_online from the high byte of REG_CURRENT_HIGH.
  * Bit 7 of REG_CURRENT_HIGH: set = discharging (no AC), clear = charging (AC present).
  */
-static void check_ac_power(struct oneup_battery *bat)
+static void update_ac_power(struct oneup_battery *bat, int current_high)
 {
-	int current_high;
 	int plugged_in;
 	int threshold;
 	int current_ac_online;
 
-	current_high = i2c_smbus_read_byte_data(bat->client, REG_CURRENT_HIGH);
-	if (current_high < 0) {
-		dev_err(&bat->client->dev, "Failed to read current register: %d\n", current_high);
+	if (current_high < 0)
 		return;
-	}
 
 	plugged_in = (current_high & CURRENT_HIGH_DISCHARGE_BIT) ? 0 : 1;
 
@@ -637,19 +637,28 @@ static void oneup_battery_work(struct work_struct *work)
 	int prev_ac_online      = bat->ac_online;
 	int prev_status         = bat->status;
 	int prev_capacity_level = bat->capacity_level;
-	int v = 0, c = 0, t = 0;
+	int v = 0, c = 0, c_hi = -1, t = 0;
 	int frac_soc = 0, cycles = 0, soh = 100, stb_c = 0;
-	bool v_ok, c_ok, t_ok, cycles_ok, soh_ok, stb_c_ok;
+	int new_soc;
+	bool v_ok, c_ok, t_ok, cycles_ok = false, soh_ok = false, stb_c_ok = false;
 
-	check_ac_power(bat);
-	set_power_states(bat, check_battery_state(bat, &frac_soc));
+	c_ok = (read_current_ua(bat->client, &c, &c_hi) == 0);
+	if (c_ok)
+		update_ac_power(bat, c_hi);
 
-	v_ok      = (read_voltage_uv(bat->client, &v) == 0);
-	c_ok      = (read_current_ua(bat->client, &c) == 0);
-	t_ok      = (read_temperature_dc(bat->client, &t) == 0);
-	cycles_ok = (read_cycle_count(bat->client, &cycles) == 0);
-	soh_ok    = (read_soh(bat->client, &soh) == 0);
-	stb_c_ok  = (read_standby_current_ua(bat->client, &stb_c) == 0);
+	new_soc = check_battery_state(bat, &frac_soc);
+	set_power_states(bat, new_soc);
+
+	v_ok = (read_voltage_uv(bat->client, &v) == 0);
+	t_ok = (read_temperature_dc(bat->client, &t) == 0);
+
+	/* Poll slow-changing health/cycle registers every 60s or on SOC change */
+	bat->poll_tick++;
+	if ((bat->poll_tick % 60) == 0 || new_soc != prev_soc) {
+		cycles_ok = (read_cycle_count(bat->client, &cycles) == 0);
+		soh_ok    = (read_soh(bat->client, &soh) == 0);
+		stb_c_ok  = (read_standby_current_ua(bat->client, &stb_c) == 0);
+	}
 
 	spin_lock(&bat->lock);
 	bat->soc_fractional = frac_soc;
@@ -683,7 +692,7 @@ static void oneup_battery_work(struct work_struct *work)
 	if (bat->ac_online != prev_ac_online)
 		power_supply_changed(bat->ac_psy);
 
-	schedule_delayed_work(&bat->work, HZ);
+	schedule_delayed_work(&bat->work, round_jiffies_relative(HZ));
 }
 
 static int oneup_ac_get_property(struct power_supply *psy,
@@ -874,7 +883,6 @@ static int oneup_battery_probe(struct i2c_client *client)
 
 	bat->client         = client;
 	bat->soc            = 100;
-	bat->soc            = 100;
 	bat->soc_fractional = 100 << 8;
 	bat->cycle_count    = 0;
 	bat->soh            = 100;
@@ -908,7 +916,7 @@ static int oneup_battery_probe(struct i2c_client *client)
 			 bat->ac_online ? "connected" : "not connected");
 	}
 	read_voltage_uv(client, &bat->voltage_uv);
-	read_current_ua(client, &bat->current_ua);
+	read_current_ua(client, &bat->current_ua, NULL);
 	read_temperature_dc(client, &bat->temp_dc);
 	read_cycle_count(client, &bat->cycle_count);
 	read_soh(client, &bat->soh);

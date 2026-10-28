@@ -35,6 +35,23 @@ def read_file(path, default=None):
 def is_on_ac():
     return read_file(f"{AC_PATH}/online", "0") == "1"
 
+def set_cpufreq_governor(gov):
+    seen = set()
+    for p in sorted(glob.glob("/sys/devices/system/cpu/cpu[0-9]*/cpufreq")):
+        real_p = os.path.realpath(p)
+        if real_p in seen:
+            continue
+        seen.add(real_p)
+        try:
+            maxinfo = read_file(os.path.join(real_p, "cpuinfo_max_freq"))
+            if maxinfo and gov != "powersave":
+                with open(os.path.join(real_p, "scaling_max_freq"), "w") as f:
+                    f.write(maxinfo)
+            with open(os.path.join(real_p, "scaling_governor"), "w") as f:
+                f.write(gov)
+        except Exception:
+            pass
+
 def get_telemetry():
     v_raw = read_file(f"{BAT_PATH}/voltage_now")
     c_raw = read_file(f"{BAT_PATH}/current_now")
@@ -237,10 +254,7 @@ def run_benchmark(duration=60):
     print("Starte 4-Kern stress-ng (Matrix-Multiplikation + RAM-Stress)...")
 
     # Ensure ondemand governor
-    for g in glob.glob("/sys/devices/system/cpu/cpu*/cpufreq/scaling_governor"):
-        try:
-            with open(g, "w") as f: f.write("ondemand")
-        except Exception: pass
+    set_cpufreq_governor("ondemand")
 
     stress_proc = subprocess.Popen(
         ["stress-ng", "--cpu", "4", "--cpu-method", "matrixprod", "--vm", "2", "--vm-bytes", "512M", "--timeout", f"{duration+6}s"],
@@ -258,7 +272,7 @@ def run_benchmark(duration=60):
             stress_proc.wait(timeout=2)
         except Exception:
             pass
-        subprocess.run("pkill -9 -f stress-ng 2>/dev/null", shell=True)
+        subprocess.run(["pkill", "-9", "-f", "stress-ng"], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     print("Volllast-Phase abgeschlossen, CPU kühlt ab...")
     time.sleep(3)
 
@@ -284,10 +298,7 @@ def run_benchmark(duration=60):
         set_keyboard_power(enable=False)
 
         # 3. CPU Powersave
-        for g in glob.glob("/sys/devices/system/cpu/cpu*/cpufreq/scaling_governor"):
-            try:
-                with open(g, "w") as f: f.write("powersave")
-            except Exception: pass
+        set_cpufreq_governor("powersave")
 
         # 4. Freeze user app cgroups
         set_cgroups_frozen(freeze=True)
@@ -312,10 +323,7 @@ def run_benchmark(duration=60):
         if os.path.isfile(f"{BL_PATH}/brightness"):
             with open(f"{BL_PATH}/brightness", "w") as f:
                 f.write(orig_brightness)
-        for g in glob.glob("/sys/devices/system/cpu/cpu*/cpufreq/scaling_governor"):
-            try:
-                with open(g, "w") as f: f.write("ondemand")
-            except Exception: pass
+        set_cpufreq_governor("ondemand")
 
     # -------------------------------------------------------------
     # AUSWERTUNG & BERICHT
