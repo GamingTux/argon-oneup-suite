@@ -48,7 +48,10 @@ def write_kernel_raw(path, data, is_gzipped):
         else:
             with open(tmp, "wb") as f:
                 f.write(data)
-        shutil.copymode(path, tmp)
+        try:
+            shutil.copymode(path, tmp)
+        except OSError:
+            pass
         os.replace(tmp, path)
         return True
     except Exception as e:
@@ -188,9 +191,18 @@ def main():
     if args.kernel_hook or args.apply or action in ("apply", "patch"):
         if os.geteuid() != 0:
             print("Error: Root privileges required to patch kernel images.", file=sys.stderr)
-            sys.exit(1)
+            sys.exit(0 if args.kernel_hook else 1)
+        src_dtbo = "/usr/share/cm5-mmc-fix/overlays/cm5-sdcard-fast.dtbo"
+        if os.path.isfile(src_dtbo):
+            for boot_dir in ("/boot/firmware/overlays", "/boot/overlays"):
+                if os.path.isdir(boot_dir):
+                    try:
+                        shutil.copyfile(src_dtbo, os.path.join(boot_dir, "cm5-sdcard-fast.dtbo"))
+                    except Exception:
+                        pass
+                    break
         ok = apply_all()
-        sys.exit(0 if ok else 1)
+        sys.exit(0 if (ok or args.kernel_hook) else 1)
     elif args.restore or args.action in ("restore", "unpatch"):
         if os.geteuid() != 0:
             print("Error: Root privileges required to restore kernel images.", file=sys.stderr)

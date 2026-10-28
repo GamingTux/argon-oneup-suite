@@ -1,6 +1,6 @@
 #!/bin/sh
 # Kernel postinst hook to ensure mmc_rescan freqs[] stays patched across apt upgrades
 if [ -x /usr/bin/cm5-mmc-fix ]; then
-    exec /usr/bin/cm5-mmc-fix --kernel-hook "$@"
+    /usr/bin/cm5-mmc-fix --kernel-hook "$@" || true
 fi
 exit 0

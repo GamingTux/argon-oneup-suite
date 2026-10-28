@@ -28,7 +28,7 @@
 
 #define VERSION_MAJOR   1
 #define VERSION_MINOR   0
-#define VERSION_EDIT    9
+#define VERSION_EDIT    10
 
 #define CELLS_IN_SERIES             3
 #define TOTAL_LIFE_SECONDS          (6 * 60 * 60)
@@ -36,6 +36,18 @@
 #define TOTAL_CHARGE_FULL_SECONDS   (((2*60)+30) * 60)
 
 #define CW2217_RSENSE_MOHM          10
+
+/*
+ * Current thresholds in microamperes (µA):
+ * Even in deep standby (Fake-Sleep), the laptop draws at least -260 mA (-260,000 µA)
+ * when running on battery. When AC is connected and the battery is 100% full, the
+ * charger terminates charge current (I ≈ 0 mA), where CW2217 ADC zero-offset noise
+ * can fluctuate slightly negative (e.g. -1 mA to -10 mA, setting bit 7 of REG_CURRENT_HIGH).
+ * Any current above -50 mA (-50,000 µA) therefore means external AC power is supplying
+ * the system.
+ */
+#define AC_DISCHARGE_THRESHOLD_UA   (-50000)
+#define FULL_TAPER_CURRENT_UA       150000
 
 /* I2C register addresses */
 #define REG_VCELL_HIGH              0x02
@@ -365,23 +377,31 @@ static void set_power_states(struct oneup_battery *bat, int soc)
 {
 	int new_level, new_status;
 
-	if (soc > SOC_THRESH_FULL)
-		new_level = POWER_SUPPLY_CAPACITY_LEVEL_FULL;
-	else if (soc > SOC_THRESH_HIGH)
-		new_level = POWER_SUPPLY_CAPACITY_LEVEL_HIGH;
-	else if (soc > SOC_THRESH_NORMAL)
-		new_level = POWER_SUPPLY_CAPACITY_LEVEL_NORMAL;
-	else if (soc > SOC_THRESH_LOW)
-		new_level = POWER_SUPPLY_CAPACITY_LEVEL_LOW;
-	else
-		new_level = POWER_SUPPLY_CAPACITY_LEVEL_CRITICAL;
-
 	spin_lock(&bat->lock);
-	if (bat->ac_online)
-		new_status = (soc > SOC_THRESH_FULL) ? POWER_SUPPLY_STATUS_FULL
-						     : POWER_SUPPLY_STATUS_CHARGING;
-	else
+	if (bat->ac_online) {
+		if (soc >= 100 || (soc > SOC_THRESH_FULL && bat->current_ua < FULL_TAPER_CURRENT_UA)) {
+			new_status = POWER_SUPPLY_STATUS_FULL;
+			new_level  = POWER_SUPPLY_CAPACITY_LEVEL_FULL;
+		} else {
+			new_status = POWER_SUPPLY_STATUS_CHARGING;
+			new_level  = (soc > SOC_THRESH_HIGH) ? POWER_SUPPLY_CAPACITY_LEVEL_HIGH
+				   : (soc > SOC_THRESH_NORMAL) ? POWER_SUPPLY_CAPACITY_LEVEL_NORMAL
+				   : (soc > SOC_THRESH_LOW) ? POWER_SUPPLY_CAPACITY_LEVEL_LOW
+				   : POWER_SUPPLY_CAPACITY_LEVEL_CRITICAL;
+		}
+	} else {
 		new_status = POWER_SUPPLY_STATUS_DISCHARGING;
+		if (soc > SOC_THRESH_FULL)
+			new_level = POWER_SUPPLY_CAPACITY_LEVEL_FULL;
+		else if (soc > SOC_THRESH_HIGH)
+			new_level = POWER_SUPPLY_CAPACITY_LEVEL_HIGH;
+		else if (soc > SOC_THRESH_NORMAL)
+			new_level = POWER_SUPPLY_CAPACITY_LEVEL_NORMAL;
+		else if (soc > SOC_THRESH_LOW)
+			new_level = POWER_SUPPLY_CAPACITY_LEVEL_LOW;
+		else
+			new_level = POWER_SUPPLY_CAPACITY_LEVEL_CRITICAL;
+	}
 
 	bat->soc            = soc;
 	bat->capacity_level = new_level;
@@ -390,19 +410,19 @@ static void set_power_states(struct oneup_battery *bat, int soc)
 }
 
 /*
- * Update bat->ac_online from the high byte of REG_CURRENT_HIGH.
- * Bit 7 of REG_CURRENT_HIGH: set = discharging (no AC), clear = charging (AC present).
+ * Update bat->ac_online from the measured current in µA.
+ * When the battery is 100% full and on AC power, the charger IC cuts off
+ * charge current (I ≈ 0 mA), where CW2217 ADC zero-offset can read slightly
+ * negative (-1 to -10 mA, setting bit 7 of REG_CURRENT_HIGH). Using a -50 mA
+ * threshold prevents false 'Discharging' reports when full and plugged in.
  */
-static void update_ac_power(struct oneup_battery *bat, int current_high)
+static void update_ac_power(struct oneup_battery *bat, int current_ua)
 {
 	int plugged_in;
 	int threshold;
 	int current_ac_online;
 
-	if (current_high < 0)
-		return;
-
-	plugged_in = (current_high & CURRENT_HIGH_DISCHARGE_BIT) ? 0 : 1;
+	plugged_in = (current_ua >= AC_DISCHARGE_THRESHOLD_UA) ? 1 : 0;
 
 	spin_lock(&bat->lock);
 	current_ac_online = bat->ac_online;
@@ -643,8 +663,12 @@ static void oneup_battery_work(struct work_struct *work)
 	bool v_ok, c_ok, t_ok, cycles_ok = false, soh_ok = false, stb_c_ok = false;
 
 	c_ok = (read_current_ua(bat->client, &c, &c_hi) == 0);
-	if (c_ok)
-		update_ac_power(bat, c_hi);
+	if (c_ok) {
+		spin_lock(&bat->lock);
+		bat->current_ua = c;
+		spin_unlock(&bat->lock);
+		update_ac_power(bat, c);
+	}
 
 	new_soc = check_battery_state(bat, &frac_soc);
 	set_power_states(bat, new_soc);
@@ -664,8 +688,6 @@ static void oneup_battery_work(struct work_struct *work)
 	bat->soc_fractional = frac_soc;
 	if (v_ok)
 		bat->voltage_uv = v;
-	if (c_ok)
-		bat->current_ua = c;
 	if (t_ok)
 		bat->temp_dc = t;
 	if (cycles_ok)
@@ -778,10 +800,12 @@ static int oneup_bat_get_property(struct power_supply *psy,
 		val->intval = 12600000;
 		break;
 	case POWER_SUPPLY_PROP_CURRENT_NOW:
-		val->intval = current_ua;
+		val->intval = (status == POWER_SUPPLY_STATUS_FULL && abs(current_ua) < 50000)
+			? 0 : current_ua;
 		break;
 	case POWER_SUPPLY_PROP_POWER_NOW:
-		val->intval = (int)div_s64((s64)(voltage_uv * CELLS_IN_SERIES) * abs(current_ua), 1000000LL);
+		val->intval = (status == POWER_SUPPLY_STATUS_FULL && abs(current_ua) < 50000)
+			? 0 : (int)div_s64((s64)(voltage_uv * CELLS_IN_SERIES) * abs(current_ua), 1000000LL);
 		break;
 	case POWER_SUPPLY_PROP_TEMP:
 		val->intval = temp_dc;
@@ -908,15 +932,13 @@ static int oneup_battery_probe(struct i2c_client *client)
 	 * ac_online=1 above causes the debounce logic to report AC connected
 	 * for several poll cycles when the system boots on battery.
 	 */
-	ret = i2c_smbus_read_byte_data(client, REG_CURRENT_HIGH);
-	if (ret >= 0) {
-		bat->ac_online    = (ret & CURRENT_HIGH_DISCHARGE_BIT) ? 0 : 1;
+	read_voltage_uv(client, &bat->voltage_uv);
+	if (read_current_ua(client, &bat->current_ua, NULL) == 0) {
+		bat->ac_online    = (bat->current_ua >= AC_DISCHARGE_THRESHOLD_UA) ? 1 : 0;
 		bat->ac_candidate = bat->ac_online;
 		dev_info(&client->dev, "AC Power is %s at boot.\n",
 			 bat->ac_online ? "connected" : "not connected");
 	}
-	read_voltage_uv(client, &bat->voltage_uv);
-	read_current_ua(client, &bat->current_ua, NULL);
 	read_temperature_dc(client, &bat->temp_dc);
 	read_cycle_count(client, &bat->cycle_count);
 	read_soh(client, &bat->soh);
