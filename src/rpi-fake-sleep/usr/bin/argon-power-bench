@@ -300,8 +300,22 @@ def run_benchmark(duration=60):
         # 3. CPU Powersave
         set_cpufreq_governor("powersave")
 
-        # 4. Freeze user app cgroups
+        # 4. Freeze user app cgroups & pin slices/workqueues to CPU0 (Single-Core WFI parking)
         set_cgroups_frozen(freeze=True)
+        try:
+            if os.path.isfile("/sys/fs/cgroup/cgroup.subtree_control"):
+                with open("/sys/fs/cgroup/cgroup.subtree_control", "w") as f:
+                    f.write("+cpuset")
+            for cg in ("/sys/fs/cgroup/user.slice", "/sys/fs/cgroup/system.slice", "/sys/fs/cgroup/init.scope"):
+                cpuset_file = os.path.join(cg, "cpuset.cpus")
+                if os.path.isfile(cpuset_file):
+                    with open(cpuset_file, "w") as f:
+                        f.write("0")
+            if os.path.isfile("/sys/devices/virtual/workqueue/cpumask"):
+                with open("/sys/devices/virtual/workqueue/cpumask", "w") as f:
+                    f.write("1")
+        except Exception:
+            pass
 
         # 5. Radio & Audio power savings
         set_wifi_power_save(True)
@@ -315,6 +329,17 @@ def run_benchmark(duration=60):
 
     finally:
         print("Wecke System auf: Stelle Display, Tastaturlicht, CPU-Takt, Funk & Apps wieder her...")
+        try:
+            for cg in ("/sys/fs/cgroup/user.slice", "/sys/fs/cgroup/system.slice", "/sys/fs/cgroup/init.scope"):
+                cpuset_file = os.path.join(cg, "cpuset.cpus")
+                if os.path.isfile(cpuset_file):
+                    with open(cpuset_file, "w") as f:
+                        f.write("0-3")
+            if os.path.isfile("/sys/devices/virtual/workqueue/cpumask"):
+                with open("/sys/devices/virtual/workqueue/cpumask", "w") as f:
+                    f.write("f")
+        except Exception:
+            pass
         set_bluetooth_power(True)
         set_wifi_power_save(False)
         set_cgroups_frozen(freeze=False)
