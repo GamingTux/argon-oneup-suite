@@ -5,6 +5,7 @@ rm -f /etc/systemd/sleep.conf.d/nosuspend.conf 2>/dev/null || true
 systemctl daemon-reload 2>/dev/null || true
 systemctl enable rpi-fake-sleep-enable.service 2>/dev/null || true
 systemctl start rpi-fake-sleep-enable.service 2>/dev/null || true
+/usr/bin/rpi-fake-sleep --init-panel 2>/dev/null || true
 
 # Signal logind to reload configuration
 systemctl try-reload-or-restart systemd-logind.service 2>/dev/null || true

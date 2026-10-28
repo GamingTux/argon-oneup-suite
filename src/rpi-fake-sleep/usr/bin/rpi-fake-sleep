@@ -239,10 +239,73 @@ def set_audio_autosuspend():
         except Exception:
             pass
 
+def lock_internal_panel_hotplug():
+    """
+    Prevents the Argon ONE UP internal BOE 1920x1200 panel (HDMI-A-2) from firing
+    a false DRM hotplug disconnect event when the hardware Hall sensor cuts LCD
+    controller power on lid close.
+    Without this lock, KWin destroys the 1920x1200@1.5x DrmOutput on lid close and
+    switches all Wayland clients (Firefox, kscreenlocker_greet, Plasma) to a dummy
+    1920x1080@1.0x PlaceholderOutput mid-suspend, causing KWin/Firefox Wayland crashes.
+    Safely guarded: Only activates on laptops with a hardware lid switch.
+    """
+    if get_lid_state() == "none":
+        return
+
+    edid_fw_dir = "/lib/firmware/edid"
+    edid_fw_file = os.path.join(edid_fw_dir, "argon-boe-1920x1200.bin")
+
+    for conn in glob.glob("/sys/class/drm/card*-HDMI-A-2"):
+        try:
+            edid_path = os.path.join(conn, "edid")
+            edid_bytes = b""
+            if os.path.isfile(edid_path):
+                with open(edid_path, "rb") as f:
+                    edid_bytes = f.read()
+            if len(edid_bytes) >= 128:
+                os.makedirs(edid_fw_dir, exist_ok=True)
+                if not os.path.isfile(edid_fw_file) or os.path.getsize(edid_fw_file) != len(edid_bytes):
+                    with open(edid_fw_file, "wb") as f:
+                        f.write(edid_bytes)
+            elif os.path.isfile(edid_fw_file):
+                with open(edid_fw_file, "rb") as f:
+                    edid_bytes = f.read()
+
+            if len(edid_bytes) >= 128:
+                for dbg_edid in glob.glob("/sys/kernel/debug/dri/*/HDMI-A-2/edid_override"):
+                    try:
+                        with open(dbg_edid, "wb") as f:
+                            f.write(edid_bytes)
+                    except Exception:
+                        pass
+                if os.path.isfile("/sys/module/drm/parameters/edid_firmware"):
+                    try:
+                        with open("/sys/module/drm/parameters/edid_firmware", "w") as f:
+                            f.write("HDMI-A-2:edid/argon-boe-1920x1200.bin")
+                    except Exception:
+                        pass
+
+            if os.path.isfile("/sys/module/vc4/parameters/force_hotplug"):
+                try:
+                    with open("/sys/module/vc4/parameters/force_hotplug", "w") as f:
+                        f.write("2")
+                except Exception:
+                    pass
+
+            status_path = os.path.join(conn, "status")
+            if os.path.isfile(status_path):
+                try:
+                    with open(status_path, "w") as f:
+                        f.write("on")
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
 def lock_sessions():
     """Triggers standard desktop screen locking."""
     try:
-        subprocess.run(["loginctl", "lock-sessions"], check=False)
+        subprocess.run(["loginctl", "lock-sessions"], check=False, timeout=2)
     except Exception:
         pass
     for bus in glob.glob("/run/user/*/bus"):
@@ -251,10 +314,11 @@ def lock_sessions():
             subprocess.run(
                 ["sudo", "-u", f"#{uid}", "env", f"DBUS_SESSION_BUS_ADDRESS=unix:path={bus}",
                  "qdbus6", "org.freedesktop.ScreenSaver", "/ScreenSaver", "Lock"],
-                check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+                check=False, timeout=2, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
             )
         except Exception:
             pass
+    time.sleep(0.15)
 
 def get_audio_mute_state():
     """Returns saved mute states for ALSA Master and active pipewire user sessions."""
@@ -345,8 +409,8 @@ def blank_displays():
     for w in glob.glob("/run/user/*/wayland-0"):
         try:
             uid = w.split("/")[3]
-            cmd = ["sudo", "-u", f"#{uid}", "env", f"XDG_RUNTIME_DIR=/run/user/{uid}", "WAYLAND_DISPLAY=wayland-0", "kscreen-doctor", "--dpms", "off"]
-            subprocess.run(cmd, check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            cmd = ["sudo", "-u", f"#{uid}", "env", f"XDG_RUNTIME_DIR=/run/user/{uid}", "WAYLAND_DISPLAY=wayland-0", "QT_QPA_PLATFORM=wayland", "kscreen-doctor", "--dpms", "off"]
+            subprocess.run(cmd, check=False, timeout=3, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         except Exception:
             pass
 
@@ -358,8 +422,8 @@ def restore_displays(saved_brightness):
     for w in glob.glob("/run/user/*/wayland-0"):
         try:
             uid = w.split("/")[3]
-            cmd = ["sudo", "-u", f"#{uid}", "env", f"XDG_RUNTIME_DIR=/run/user/{uid}", "WAYLAND_DISPLAY=wayland-0", "kscreen-doctor", "--dpms", "on"]
-            subprocess.run(cmd, check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            cmd = ["sudo", "-u", f"#{uid}", "env", f"XDG_RUNTIME_DIR=/run/user/{uid}", "WAYLAND_DISPLAY=wayland-0", "QT_QPA_PLATFORM=wayland", "kscreen-doctor", "--dpms", "on"]
+            subprocess.run(cmd, check=False, timeout=3, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         except Exception:
             pass
 
@@ -379,18 +443,14 @@ def restore_displays(saved_brightness):
                 pass
 
 def apply_power_saving():
-    """Freezes user applications and throttles CPU to minimum power."""
-    # 1. Freeze cgroups v2 user apps
-    for uid_dir in glob.glob("/sys/fs/cgroup/user.slice/user-*.slice/user@*.service/app.slice"):
-        freeze_path = os.path.join(uid_dir, "cgroup.freeze")
-        if os.path.exists(freeze_path):
-            try:
-                with open(freeze_path, "w") as f:
-                    f.write("1")
-            except Exception:
-                pass
+    """Throttles CPU to minimum clock and parks secondary cores in WFI."""
+    # Note: Do NOT freeze app.slice via cgroup.freeze while session.slice (kwin_wayland)
+    # remains unfrozen. Under Wayland, freezing GUI clients (e.g. Firefox) while KWin
+    # continues sending wl_output / xdg_wm_base.ping / presentation events overflows
+    # the Wayland socket buffer and triggers EPIPE ('Broken pipe') crashes.
+    # Display DPMS Off already stops all wl_surface.frame VSync callbacks (0 FPS).
 
-    # 2. Throttle CPU governor to powersave and minimum clock
+    # 1. Throttle CPU governor to powersave and minimum clock
     # Note: On RPi 5 / CM5, cpu0..cpu3/cpufreq are symlinks to shared ../cpufreq/policy0.
     # Deduplicate via realpath so writing to policy0 does not corrupt subsequent reads.
     saved_cpu_state = {}
@@ -544,15 +604,20 @@ def main():
     if len(sys.argv) > 1:
         arg = sys.argv[1].lower()
         if arg in ("--help", "-h", "help"):
-            print("Usage: rpi-fake-sleep [suspend|status|--help]")
+            print("Usage: rpi-fake-sleep [suspend|status|--init-panel|--help]")
             print("Universal Userspace Sleep & Standby Manager for Raspberry Pi.")
             sys.exit(0)
         elif arg == "status":
             print_status()
             sys.exit(0)
+        elif arg in ("--init-panel", "init-panel"):
+            lock_internal_panel_hotplug()
+            sys.exit(0)
 
     signal.signal(signal.SIGTERM, sig_handler)
     signal.signal(signal.SIGINT, sig_handler)
+
+    lock_internal_panel_hotplug()
 
     cfg = load_config()
     initial_lid = get_lid_state()

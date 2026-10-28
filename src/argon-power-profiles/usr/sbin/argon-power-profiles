@@ -82,6 +82,40 @@ def apply_system_power_tweaks(profile):
     # Schedule kernel workqueues onto already-awake cores instead of waking sleeping WFI cores
     write_sysfs("/sys/module/workqueue/parameters/power_efficient", "Y")
 
+    # Lock internal BOE 1920x1200 panel (HDMI-A-2) hotplug & EDID on Argon ONE UP laptops
+    # so closing the lid (which cuts panel power in hardware) never triggers a false DRM
+    # disconnect / KWin PlaceholderOutput switch
+    if glob.glob("/sys/class/power_supply/BAT*"):
+        edid_fw_dir = "/lib/firmware/edid"
+        edid_fw_file = os.path.join(edid_fw_dir, "argon-boe-1920x1200.bin")
+        for conn in glob.glob("/sys/class/drm/card*-HDMI-A-2"):
+            try:
+                edid_path = os.path.join(conn, "edid")
+                edid_bytes = b""
+                if os.path.isfile(edid_path):
+                    with open(edid_path, "rb") as fp:
+                        edid_bytes = fp.read()
+                if len(edid_bytes) >= 128:
+                    os.makedirs(edid_fw_dir, exist_ok=True)
+                    if not os.path.isfile(edid_fw_file) or os.path.getsize(edid_fw_file) != len(edid_bytes):
+                        with open(edid_fw_file, "wb") as fp:
+                            fp.write(edid_bytes)
+                elif os.path.isfile(edid_fw_file):
+                    with open(edid_fw_file, "rb") as fp:
+                        edid_bytes = fp.read()
+                if len(edid_bytes) >= 128:
+                    for dbg_edid in glob.glob("/sys/kernel/debug/dri/*/HDMI-A-2/edid_override"):
+                        try:
+                            with open(dbg_edid, "wb") as fp:
+                                fp.write(edid_bytes)
+                        except OSError:
+                            pass
+                    write_sysfs("/sys/module/drm/parameters/edid_firmware", "HDMI-A-2:edid/argon-boe-1920x1200.bin")
+                write_sysfs("/sys/module/vc4/parameters/force_hotplug", "2")
+                write_sysfs(os.path.join(conn, "status"), "on")
+            except OSError:
+                pass
+
     # Enable native transparent USB autosuspend on USB audio devices by unbinding
     # any unused composite usbhid sub-interface (e.g. 1-1.1:1.3) that blocks runtime suspend
     for audio_intf in glob.glob("/sys/bus/usb/drivers/snd-usb-audio/*:*"):
