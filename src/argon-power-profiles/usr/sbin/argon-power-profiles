@@ -52,7 +52,14 @@ def apply_governor(profile):
         maxinfo_path = os.path.join(real_policy, "cpuinfo_max_freq")
         max_path = os.path.join(real_policy, "scaling_max_freq")
         gov_path = os.path.join(real_policy, "scaling_governor")
+        avail_path = os.path.join(real_policy, "scaling_available_governors")
+        target_gov = gov
         try:
+            if target_gov == "ondemand" and os.path.isfile(avail_path):
+                with open(avail_path, "r") as fp:
+                    avail = fp.read().split()
+                if "ondemand" not in avail and "schedutil" in avail:
+                    target_gov = "schedutil"
             if os.path.isfile(maxinfo_path) and os.path.isfile(max_path):
                 with open(maxinfo_path, "r") as fp:
                     top_freq = fp.read().strip()
@@ -60,7 +67,7 @@ def apply_governor(profile):
                     fp.write(top_freq)
         except OSError:
             pass
-        write_sysfs(gov_path, gov)
+        write_sysfs(gov_path, target_gov)
 
     if gov == "ondemand":
         ondemand_dirs = ["/sys/devices/system/cpu/cpufreq/ondemand"] + glob.glob("/sys/devices/system/cpu/cpufreq/policy*/ondemand")
