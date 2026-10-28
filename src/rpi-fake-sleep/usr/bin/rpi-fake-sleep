@@ -302,8 +302,91 @@ def lock_internal_panel_hotplug():
         except Exception:
             pass
 
+def ensure_powerdevil_lid_config():
+    """
+    Ensures KDE PowerDevil does not suppress LidAction when HDMI-A-2 (the internal
+    Argon ONE UP panel, which is an HDMI connector rather than eDP) stays connected
+    via vc4.force_hotplug=2.
+    """
+    if get_lid_state() == "none":
+        return
+
+    updated = False
+    pd_files = ["/etc/xdg/powerdevilrc"] + glob.glob("/home/*/.config/powerdevilrc")
+    for pd_file in pd_files:
+        try:
+            content = ""
+            st_uid, st_gid = 0, 0
+            if os.path.isfile(pd_file):
+                st = os.stat(pd_file)
+                st_uid, st_gid = st.st_uid, st.st_gid
+                with open(pd_file, "r") as f:
+                    content = f.read()
+            elif pd_file.startswith("/home/"):
+                home_dir = "/".join(pd_file.split("/")[:3])
+                if os.path.isdir(home_dir):
+                    st = os.stat(home_dir)
+                    st_uid, st_gid = st.st_uid, st.st_gid
+
+            orig = content
+            for sec in ("[AC][SuspendAndShutdown]", "[Battery][SuspendAndShutdown]", "[LowBattery][SuspendAndShutdown]"):
+                if sec not in content:
+                    content = content.rstrip() + f"\n\n{sec}\nInhibitLidActionWhenExternalMonitorPresent=false\nLidAction=1\n"
+                elif "InhibitLidActionWhenExternalMonitorPresent" not in content.split(sec, 1)[1].split("\n[", 1)[0]:
+                    content = content.replace(sec, f"{sec}\nInhibitLidActionWhenExternalMonitorPresent=false")
+            if content != orig:
+                os.makedirs(os.path.dirname(pd_file), exist_ok=True)
+                with open(pd_file, "w") as f:
+                    f.write(content)
+                if st_uid != 0:
+                    os.chown(pd_file, st_uid, st_gid)
+                updated = True
+        except Exception:
+            pass
+
+    if updated:
+        for bus in glob.glob("/run/user/*/bus"):
+            try:
+                uid = bus.split("/")[3]
+                subprocess.run(
+                    ["sudo", "-u", f"#{uid}", "env", f"XDG_RUNTIME_DIR=/run/user/{uid}",
+                     "DBUS_SESSION_BUS_ADDRESS=unix:path=" + bus,
+                     "systemctl", "--user", "restart", "plasma-powerdevil.service"],
+                    check=False, timeout=3, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+                )
+            except Exception:
+                pass
+
+def pause_media_players():
+    """
+    Universally pauses any active MPRIS2 media players (Firefox/YouTube, Chromium,
+    Brave, VLC, mpv, Spotify, etc.) across all desktop environments (KDE, Cinnamon,
+    GNOME, XFCE, Labwc) using systemd's built-in busctl.
+    """
+    for bus in glob.glob("/run/user/*/bus"):
+        try:
+            uid = bus.split("/")[3]
+            env_vars = [f"XDG_RUNTIME_DIR=/run/user/{uid}", f"DBUS_SESSION_BUS_ADDRESS=unix:path={bus}"]
+            res = subprocess.run(
+                ["sudo", "-u", f"#{uid}", "env"] + env_vars + ["busctl", "--user", "--list"],
+                capture_output=True, text=True, timeout=2, check=False
+            )
+            if res.returncode == 0:
+                for line in res.stdout.splitlines():
+                    parts = line.split()
+                    if parts and parts[0].startswith("org.mpris.MediaPlayer2."):
+                        subprocess.run(
+                            ["sudo", "-u", f"#{uid}", "env"] + env_vars + [
+                                "busctl", "--user", "call", parts[0],
+                                "/org/mpris/MediaPlayer2", "org.mpris.MediaPlayer2.Player", "Pause"
+                            ],
+                            check=False, timeout=1, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+                        )
+        except Exception:
+            pass
+
 def lock_sessions():
-    """Triggers standard desktop screen locking."""
+    """Triggers universal desktop screen locking across logind, KDE, Cinnamon, GNOME, and XFCE."""
     try:
         subprocess.run(["loginctl", "lock-sessions"], check=False, timeout=2)
     except Exception:
@@ -311,11 +394,16 @@ def lock_sessions():
     for bus in glob.glob("/run/user/*/bus"):
         try:
             uid = bus.split("/")[3]
-            subprocess.run(
-                ["sudo", "-u", f"#{uid}", "env", f"DBUS_SESSION_BUS_ADDRESS=unix:path={bus}",
-                 "qdbus6", "org.freedesktop.ScreenSaver", "/ScreenSaver", "Lock"],
-                check=False, timeout=2, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-            )
+            env_vars = [f"XDG_RUNTIME_DIR=/run/user/{uid}", f"DBUS_SESSION_BUS_ADDRESS=unix:path={bus}"]
+            for dest, path, iface in (
+                ("org.freedesktop.ScreenSaver", "/ScreenSaver", "org.freedesktop.ScreenSaver"),
+                ("org.cinnamon.ScreenSaver", "/org/cinnamon/ScreenSaver", "org.cinnamon.ScreenSaver"),
+                ("org.gnome.ScreenSaver", "/org/gnome/ScreenSaver", "org.gnome.ScreenSaver"),
+            ):
+                subprocess.run(
+                    ["sudo", "-u", f"#{uid}", "env"] + env_vars + ["busctl", "--user", "call", dest, path, iface, "Lock"],
+                    check=False, timeout=1, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+                )
         except Exception:
             pass
     time.sleep(0.15)
@@ -405,27 +493,96 @@ def blank_displays():
         except Exception:
             pass
 
-    # Wayland KWin DPMS via kscreen-doctor
-    for w in glob.glob("/run/user/*/wayland-0"):
+    # Wayland DPMS (KDE KWin via kscreen-doctor, RPi OS Labwc/Wayfire via wlopm, GNOME/Mutter via busctl)
+    for w in glob.glob("/run/user/*/wayland-*"):
+        if w.endswith(".lock"):
+            continue
         try:
             uid = w.split("/")[3]
-            cmd = ["sudo", "-u", f"#{uid}", "env", f"XDG_RUNTIME_DIR=/run/user/{uid}", "WAYLAND_DISPLAY=wayland-0", "QT_QPA_PLATFORM=wayland", "kscreen-doctor", "--dpms", "off"]
-            subprocess.run(cmd, check=False, timeout=3, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            w_name = os.path.basename(w)
+            env_vars = ["sudo", "-u", f"#{uid}", "env", f"XDG_RUNTIME_DIR=/run/user/{uid}", f"WAYLAND_DISPLAY={w_name}"]
+            if os.path.isfile("/usr/bin/kscreen-doctor"):
+                subprocess.run(env_vars + ["QT_QPA_PLATFORM=wayland", "kscreen-doctor", "--dpms", "off"],
+                               check=False, timeout=3, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            if os.path.isfile("/usr/bin/wlopm"):
+                subprocess.run(env_vars + ["wlopm", "--off", "*"],
+                               check=False, timeout=2, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            bus = f"/run/user/{uid}/bus"
+            if os.path.exists(bus):
+                subprocess.run(
+                    env_vars + [f"DBUS_SESSION_BUS_ADDRESS=unix:path={bus}",
+                                "busctl", "--user", "set-property", "org.gnome.Mutter.DisplayConfig",
+                                "/org/gnome/Mutter/DisplayConfig", "org.gnome.Mutter.DisplayConfig", "PowerSaveMode", "i", "3"],
+                    check=False, timeout=1, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+                )
         except Exception:
             pass
+
+    # X11 DPMS (Cinnamon, XFCE, MATE, LXDE)
+    if os.path.isfile("/usr/bin/xset"):
+        for xsock in glob.glob("/tmp/.X11-unix/X*"):
+            try:
+                disp = ":" + os.path.basename(xsock)[1:]
+                for bus in glob.glob("/run/user/*/bus"):
+                    uid = bus.split("/")[3]
+                    pw = os.path.expanduser(f"~#{uid}")
+                    xauth = f"/run/user/{uid}/gdm/Xauthority"
+                    if not os.path.isfile(xauth):
+                        xauth = os.path.join(f"/home/{os.listdir('/home')[0]}" if os.path.isdir("/home") and os.listdir("/home") else "/root", ".Xauthority")
+                    subprocess.run(
+                        ["sudo", "-u", f"#{uid}", "env", f"DISPLAY={disp}", f"XAUTHORITY={xauth}",
+                         "xset", "dpms", "force", "off"],
+                        check=False, timeout=2, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+                    )
+            except Exception:
+                pass
 
     return saved_brightness
 
 def restore_displays(saved_brightness):
-    """Restores DRM DPMS and backlight brightness."""
-    # Wayland KWin DPMS via kscreen-doctor
-    for w in glob.glob("/run/user/*/wayland-0"):
+    """Restores DRM DPMS and backlight brightness across Wayland and X11."""
+    # Wayland DPMS (KDE KWin, RPi OS Labwc/Wayfire, GNOME/Mutter)
+    for w in glob.glob("/run/user/*/wayland-*"):
+        if w.endswith(".lock"):
+            continue
         try:
             uid = w.split("/")[3]
-            cmd = ["sudo", "-u", f"#{uid}", "env", f"XDG_RUNTIME_DIR=/run/user/{uid}", "WAYLAND_DISPLAY=wayland-0", "QT_QPA_PLATFORM=wayland", "kscreen-doctor", "--dpms", "on"]
-            subprocess.run(cmd, check=False, timeout=3, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            w_name = os.path.basename(w)
+            env_vars = ["sudo", "-u", f"#{uid}", "env", f"XDG_RUNTIME_DIR=/run/user/{uid}", f"WAYLAND_DISPLAY={w_name}"]
+            if os.path.isfile("/usr/bin/kscreen-doctor"):
+                subprocess.run(env_vars + ["QT_QPA_PLATFORM=wayland", "kscreen-doctor", "--dpms", "on"],
+                               check=False, timeout=3, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            if os.path.isfile("/usr/bin/wlopm"):
+                subprocess.run(env_vars + ["wlopm", "--on", "*"],
+                               check=False, timeout=2, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            bus = f"/run/user/{uid}/bus"
+            if os.path.exists(bus):
+                subprocess.run(
+                    env_vars + [f"DBUS_SESSION_BUS_ADDRESS=unix:path={bus}",
+                                "busctl", "--user", "set-property", "org.gnome.Mutter.DisplayConfig",
+                                "/org/gnome/Mutter/DisplayConfig", "org.gnome.Mutter.DisplayConfig", "PowerSaveMode", "i", "0"],
+                    check=False, timeout=1, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+                )
         except Exception:
             pass
+
+    # X11 DPMS (Cinnamon, XFCE, MATE, LXDE)
+    if os.path.isfile("/usr/bin/xset"):
+        for xsock in glob.glob("/tmp/.X11-unix/X*"):
+            try:
+                disp = ":" + os.path.basename(xsock)[1:]
+                for bus in glob.glob("/run/user/*/bus"):
+                    uid = bus.split("/")[3]
+                    xauth = f"/run/user/{uid}/gdm/Xauthority"
+                    if not os.path.isfile(xauth):
+                        xauth = os.path.join(f"/home/{os.listdir('/home')[0]}" if os.path.isdir("/home") and os.listdir("/home") else "/root", ".Xauthority")
+                    subprocess.run(
+                        ["sudo", "-u", f"#{uid}", "env", f"DISPLAY={disp}", f"XAUTHORITY={xauth}",
+                         "xset", "dpms", "force", "on"],
+                        check=False, timeout=2, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+                    )
+            except Exception:
+                pass
 
     for dpms in glob.glob("/sys/class/drm/card*-*/dpms"):
         try:
@@ -443,14 +600,43 @@ def restore_displays(saved_brightness):
                 pass
 
 def apply_power_saving():
-    """Throttles CPU to minimum clock and parks secondary cores in WFI."""
-    # Note: Do NOT freeze app.slice via cgroup.freeze while session.slice (kwin_wayland)
-    # remains unfrozen. Under Wayland, freezing GUI clients (e.g. Firefox) while KWin
-    # continues sending wl_output / xdg_wm_base.ping / presentation events overflows
-    # the Wayland socket buffer and triggers EPIPE ('Broken pipe') crashes.
-    # Display DPMS Off already stops all wl_surface.frame VSync callbacks (0 FPS).
+    """Freezes user applications and throttles CPU to minimum clock and single-core WFI."""
+    # Allow 250ms for Wayland clients (Firefox, etc.) to finish processing focus-leave,
+    # MPRIS pause, and DPMS-off events before freezing app.slice
+    time.sleep(0.25)
 
-    # 1. Throttle CPU governor to powersave and minimum clock
+    # 1. Freeze cgroups v2 user apps (0% CPU for browsers/videos/games during sleep)
+    for uid_dir in glob.glob("/sys/fs/cgroup/user.slice/user-*.slice/user@*.service/app.slice"):
+        freeze_path = os.path.join(uid_dir, "cgroup.freeze")
+        if os.path.exists(freeze_path):
+            try:
+                with open(freeze_path, "w") as f:
+                    f.write("1")
+            except Exception:
+                pass
+
+    # 1b. For desktop environments (Cinnamon, XFCE, MATE, Labwc) that place apps in
+    # session-*.scope instead of app.slice, send SIGSTOP to heavy user app processes
+    stopped_pids = []
+    app_names = ("firefox", "chromium", "brave", "chrome", "epiphany", "midori",
+                 "vlc", "mpv", "celluloid", "zapzap", "electron", "wine", "box64")
+    for scope_procs in glob.glob("/sys/fs/cgroup/user.slice/user-*.slice/session-*.scope/cgroup.procs"):
+        try:
+            with open(scope_procs, "r") as f:
+                pids = [int(p.strip()) for p in f if p.strip().isdigit()]
+            for pid in pids:
+                try:
+                    with open(f"/proc/{pid}/comm", "r") as cf:
+                        comm = cf.read().strip().lower()
+                    if any(comm.startswith(a) for a in app_names):
+                        os.kill(pid, signal.SIGSTOP)
+                        stopped_pids.append(pid)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+    # 2. Throttle CPU governor to powersave and minimum clock
     # Note: On RPi 5 / CM5, cpu0..cpu3/cpufreq are symlinks to shared ../cpufreq/policy0.
     # Deduplicate via realpath so writing to policy0 does not corrupt subsequent reads.
     saved_cpu_state = {}
@@ -512,6 +698,7 @@ def apply_power_saving():
     except Exception:
         pass
 
+    saved_cpu_state["__stopped_pids__"] = stopped_pids
     return saved_cpu_state
 
 def restore_power(saved_cpu_state):
@@ -534,13 +721,20 @@ def restore_power(saved_cpu_state):
     except Exception:
         pass
 
-    # 1. Unfreeze cgroups v2 user apps
+    # 1. Unfreeze cgroups v2 user apps & SIGCONT any session-scope apps
     for uid_dir in glob.glob("/sys/fs/cgroup/user.slice/user-*.slice/user@*.service/app.slice"):
         freeze_path = os.path.join(uid_dir, "cgroup.freeze")
         if os.path.exists(freeze_path):
             try:
                 with open(freeze_path, "w") as f:
                     f.write("0")
+            except Exception:
+                pass
+
+    if isinstance(saved_cpu_state, dict):
+        for pid in saved_cpu_state.get("__stopped_pids__", []):
+            try:
+                os.kill(pid, signal.SIGCONT)
             except Exception:
                 pass
 
@@ -612,12 +806,14 @@ def main():
             sys.exit(0)
         elif arg in ("--init-panel", "init-panel"):
             lock_internal_panel_hotplug()
+            ensure_powerdevil_lid_config()
             sys.exit(0)
 
     signal.signal(signal.SIGTERM, sig_handler)
     signal.signal(signal.SIGINT, sig_handler)
 
     lock_internal_panel_hotplug()
+    ensure_powerdevil_lid_config()
 
     cfg = load_config()
     initial_lid = get_lid_state()
@@ -631,11 +827,12 @@ def main():
     saved_wifi_powersave = get_wifi_power_save()
     saved_audio_mute = get_audio_mute_state()
 
-    # 1. Lock screen
-    lock_sessions()
-
-    # 2. Mute sound
+    # 1. Pause active media players (YouTube, etc.) & mute sound
+    pause_media_players()
     mute_audio()
+
+    # 2. Lock screen
+    lock_sessions()
 
     # 3. Blank displays
     saved_brightness = blank_displays()
@@ -673,8 +870,8 @@ def main():
 
     try:
         while True:
-            # Poll every 1.0s for instant responsiveness
-            events = epoll.poll(timeout=1.0)
+            # Poll every 0.25s for instant responsiveness
+            events = epoll.poll(timeout=0.25)
 
             # Check if lid state transitioned to open (fast 1s poll check)
             if lid_was_closed and get_lid_state() == "open":
@@ -770,16 +967,20 @@ def main():
                 pass
         epoll.close()
 
-        # Always re-enable keyboard power on resume
-        set_keyboard_backlight_power(enable=True)
+        # 1. Unfreeze user apps and restore multi-core CPU clock FIRST so Wayland
+        # clients (Firefox, etc.) are awake BEFORE KWin turns display DPMS back on
+        restore_power(saved_cpu_state)
+        time.sleep(0.05)
 
-        # Restore system state
+        # 2. Restore displays (DPMS On & brightness)
+        restore_displays(saved_brightness)
+
+        # 3. Re-enable keyboard power, radios, and audio on resume
+        set_keyboard_backlight_power(enable=True)
         if cfg.get("SUSPEND_BLUETOOTH_BLOCK", True) and not saved_bt_blocked:
             set_bluetooth_power(True)
         if cfg.get("SUSPEND_WIFI_POWERSAVE", True):
             set_wifi_power_save(saved_wifi_powersave)
-        restore_power(saved_cpu_state)
-        restore_displays(saved_brightness)
         restore_audio(saved_audio_mute)
         log("Wakeup complete, normal power & display restored")
 
