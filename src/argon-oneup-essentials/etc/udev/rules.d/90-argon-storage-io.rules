@@ -1,3 +1,6 @@
 # Optimal I/O Scheduler & Read-Ahead for NVMe SSDs and eMMC/SD storage
 ACTION=="add|change", KERNEL=="nvme[0-9]*n[0-9]*", ATTR{queue/scheduler}="none", ATTR{queue/read_ahead_kb}="256"
 ACTION=="add|change", KERNEL=="mmcblk[0-9]*", ATTR{queue/scheduler}="mq-deadline", ATTR{queue/read_ahead_kb}="256"
+
+# Put unpopulated CM5 Gigabit Ethernet PHY (BCM54213PE) into MDIO BMCR_PDOWN hardware suspend
+ACTION=="add", SUBSYSTEM=="net", KERNEL=="eth0", RUN+="/sbin/ip link set dev eth0 down"

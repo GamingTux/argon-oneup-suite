@@ -60,9 +60,6 @@ if [ -n "$BOOT_CFG" ] && [ -f "$BOOT_CFG" ]; then
             echo "usb_max_current_enable=1"
             echo "dtoverlay=dwc2,dr_mode=host"
         fi
-        if [ "${DISABLE_UNUSED_ETHERNET:-1}" = "1" ]; then
-            echo "dtoverlay=cm5-disable-ethernet"
-        fi
         echo "[pi5]"
         if [ -n "$ARM_FREQ" ] && [ "$ARM_FREQ" -gt 0 ] 2>/dev/null; then
             echo "arm_freq=${ARM_FREQ}"
