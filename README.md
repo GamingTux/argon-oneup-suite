@@ -25,23 +25,23 @@ Die Suite ist modular in **8 eigenständige Debian-Pakete** aufgeteilt. Jedes Pa
 | [**`argon-oneup-sensors`**](src/argon-oneup-sensors) | `arm64` | Leitet alle physischen Hardware-Sensoren (CPU-Temperatur, PWM-Lüfterdrehzahl, NVMe-Temperatur, Akku-Telemetrie) standardkonform über `lm-sensors` weiter. Behebt zudem den KDE Plasma 6 `ksystemstats` ARM64 Deadlock ([KDE Bug #493093](https://bugs.kde.org/show_bug.cgi?id=493093)). |
 | [**`argon-power-profiles`**](src/argon-power-profiles) | `all` | Drop-in Ersatz für den `power-profiles-daemon` auf ARM64/Raspberry Pi. Stellt D-Bus-APIs für KDE/GNOME bereit und regelt dynamisch CPU-Governors (1.5 GHz bis Max), WLAN-Energiesparmodus und Backlight-Profile (*Quiet*, *Balanced*, *Performance*). |
 | [**`cm5-mmc-fix`**](src/cm5-mmc-fix) | `all` | Behebt den 30–80 Sekunden langen Shutdown/Reboot-Hang auf dem Raspberry Pi CM5 Lite bei leerem MicroSD-Slot (BCM2712 SDHCI Hardware-Timeout Bug). |
-| [**`rpi-fake-sleep`**](src/rpi-fake-sleep) | `all` | Universeller Standby/Ruhezustand-Manager für Raspberry Pi. Friert Prozesse über cgroups v2 ein, parkt die Kerne C1–C3 per Single-Core-`cpuset`/Workqueue-Pinning dauerhaft im Hardware-`WFI` (sodass nur `C0` für das Aufwach-Event zuständig bleibt), taktet die CPU herunter, schaltet Display & Tastatur-USB-Strom ab und senkt den Standby-Verbrauch auf **3,86 W (< 300 mA)** bei <1 ms Aufwachzeit. |
+| [**`rpi-fake-sleep`**](src/rpi-fake-sleep) | `all` | Universeller Standby/Ruhezustand-Manager für Raspberry Pi. Friert Prozesse über cgroups v2 ein, parkt die Kerne C1–C3 per Single-Core-`cpuset`/Workqueue-Pinning dauerhaft im Hardware-`WFI`, legt den kompletten internen USB-2.0-Baum (`snd-usb-audio`, Hub `1-1` & `usb1`) in den Hardware-Suspend und senkt den Standby-Verbrauch auf **3,28 – 3,45 W (~261–275 mA)** bei <1 ms Aufwachzeit. |
 | [**`argon-oneup-suite`**](src/argon-oneup-suite) | `all` | **Metapaket:** Installiert mit einem einzigen Befehl alle oben genannten Pakete als gemeinsame Gesamtsuite. |
 
 ---
 
-## ⚡ Energieverbrauch & Benchmarks (`v1.2.0`)
+## ⚡ Energieverbrauch & Benchmarks (`v1.2.1`)
 
 Gemessen auf dem **Argon ONE UP Laptop** (Raspberry Pi Compute Module 5 Lite, 8 GB RAM, 256 GB NVMe SSD, 55,21 Wh / 4800 mAh 3S1P Li-Po Akku, Debian 13 Trixie, KDE Plasma 6) mit dem integrierten Benchmark-Tool `sudo argon-power-bench`:
 
 | Betriebszustand | Ø Gesamtleistung (3S) | Min .. Max | Ø Zell-Leistung | Ø Strom (`I`) | SoC-Temperatur | Reale Akkulaufzeit |
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: |
-| **Leerlauf (Idle)** *(KDE Plasma 6 aktiv, 70 % Display)* | **9,83 W** | `9,76 .. 10,70 W` | `3,28 W` | `-766,6 mA` | `35,9 – 38,6 °C` | **ca. 5,6 Std.** |
-| **Volllast (Load)** *(4 Kerne 100 % @ 2,80 GHz)* | **15,54 W** | `14,82 .. 16,49 W` | `5,18 W` | `-1228,4 mA` | `44,1 – 52,9 °C` | **ca. 3,6 Std.** |
-| **Fake-Sleep (60s Gesamtschnitt)** *(inkl. 18s Nachlauf nach Volllast)* | **4,34 W** | `3,86 .. 5,19 W` | `1,45 W` | `-337,4 mA` | `37,0 – 43,0 °C` | **ca. 12,7 Std.** |
-| **Fake-Sleep (Steady-State)** *(eingeschwungen ab Sekunde 19)* | **3,91 W** | **`3,86 .. 3,98 W`** | **`1,30 W`** | **`-303,6 mA`** | `37,0 – 39,7 °C` | **ca. 14,1 Std.** |
+| **Leerlauf (Idle)** *(KDE Plasma 6 aktiv, 70 % Display)* | **9,54 W** | `9,41 .. 9,88 W` | `3,18 W` | `-767,3 mA` | `33,6 – 36,4 °C` | **ca. 5,8 Std.** |
+| **Volllast (Load)** *(4 Kerne 100 % @ 2,80 GHz)* | **15,24 W** | `14,70 .. 16,40 W` | `5,08 W` | `-1240,3 mA` | `44,1 – 52,4 °C` | **ca. 3,6 Std.** |
+| **Fake-Sleep (60s Gesamtschnitt)** *(inkl. 18s Nachlauf nach Volllast)* | **3,89 W** | `3,28 .. 4,80 W` | `1,30 W` | `-310,2 mA` | `34,2 – 40,8 °C` | **ca. 14,2 Std.** |
+| **Fake-Sleep (Steady-State)** *(eingeschwungen ab Sekunde 19)* | **3,46 W** | **`3,28 .. 3,59 W`** | **`1,15 W`** | **`-275,4 mA`** | `34,2 – 37,5 °C` | **ca. 16,0 – 16,8 Std.** |
 
-* **Über 60 % Ersparnis im Standby:** Im eingeschwungenen Fake-Sleep (`3,86 – 3,91 W` / `~300 mA`) verbraucht das gesamte System fast **6 Watt weniger** als im normalen Desktop-Leerlauf (`9,83 W`) und wacht bei Tastendruck oder Öffnen des Displaydeckels verzögerungsfrei auf.
+* **Bis zu 65 % Ersparnis im Standby:** Im eingeschwungenen Fake-Sleep (`3,28 – 3,46 W` / `~261–275 mA`) verbraucht das gesamte System über **6 Watt weniger** als im normalen Desktop-Leerlauf (`9,54 W`) und wacht bei Tastendruck oder Öffnen des Displaydeckels verzögerungsfrei auf.
 * **CPU-Performance (Geekbench 7.1.0 ARM64 @ 2,80 GHz):**
   * **KDE Plasma 6 Desktop aktiv:** **902 Single-Core / 2.206 Multi-Core** ([Ergebnis ansehen](https://browser.geekbench.com/v7/cpu/740896))
   * **Reine Konsole (ohne GUI):** **919 Single-Core / 2.316 Multi-Core** ([Ergebnis ansehen](https://browser.geekbench.com/v7/cpu/740978))
