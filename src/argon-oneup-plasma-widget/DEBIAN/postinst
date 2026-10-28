@@ -1,0 +1,5 @@
+#!/bin/bash
+set -e
+
+echo "[argon-oneup-plasma-widget] Argon ONE UP Dashboard plasmoid installed successfully."
+exit 0

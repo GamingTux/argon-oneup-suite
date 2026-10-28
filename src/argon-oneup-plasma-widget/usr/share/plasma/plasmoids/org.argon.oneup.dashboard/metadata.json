@@ -1,0 +1,24 @@
+{
+    "KPackageStructure": "Plasma/Applet",
+    "KPlugin": {
+        "Authors": [
+            {
+                "Email": "gamingtux@users.noreply.github.com",
+                "Name": "GamingTux"
+            }
+        ],
+        "Category": "System Information",
+        "Description": "Hardware Monitor & System Dashboard für den Argon ONE UP Laptop",
+        "Description[de]": "Hardware Monitor & System Dashboard für den Argon ONE UP Laptop",
+        "Icon": "computer-laptop",
+        "Id": "org.argon.oneup.dashboard",
+        "License": "GPL-2.0+",
+        "Name": "Argon ONE UP Dashboard",
+        "Name[de]": "Argon ONE UP Dashboard",
+        "Website": "https://github.com/GamingTux/argon-oneup-suite"
+    },
+    "X-Plasma-API-Minimum-Version": "6.0",
+    "X-Plasma-Provides": [
+        "org.kde.plasma.systemmonitor"
+    ]
+}

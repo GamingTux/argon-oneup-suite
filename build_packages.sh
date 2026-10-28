@@ -15,7 +15,7 @@ find "${SRC_DIR}" -type f -name "*~" -delete 2>/dev/null || true
 
 echo "=== Building Argon ONE UP Debian Packages ==="
 
-for pkg in argon-oneup-backlight argon-oneup-battery argon-oneup-lid argon-oneup-sensors argon-power-profiles cm5-mmc-fix rpi-fake-sleep argon-oneup-suite; do
+for pkg in argon-oneup-backlight argon-oneup-battery argon-oneup-lid argon-oneup-sensors argon-oneup-plasma-widget argon-power-profiles cm5-mmc-fix rpi-fake-sleep argon-oneup-suite; do
     PKG_PATH="${SRC_DIR}/${pkg}"
     if [ -d "${PKG_PATH}" ]; then
         echo "Building ${pkg}..."

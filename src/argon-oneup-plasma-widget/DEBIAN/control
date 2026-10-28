@@ -1,0 +1,14 @@
+Package: argon-oneup-plasma-widget
+Version: 1.1.0
+Architecture: all
+Maintainer: GamingTux <gamingtux@users.noreply.github.com>
+Section: kde
+Priority: optional
+Homepage: https://github.com/GamingTux/argon-oneup-suite
+Depends: plasma-desktop, python3
+Recommends: argon-power-profiles (>= 1.1.0), argon-oneup-battery (>= 1.1.0)
+Description: Argon ONE UP Dashboard Plasmoid for KDE Plasma 6
+ A custom, sleek desktop dashboard widget designed specifically for the
+ Argon ONE UP laptop running KDE Plasma. Provides real-time hardware telemetry:
+ per-core CPU clock, SoC temperature, CW2217 battery statistics (wattage, voltage,
+ health, cycle count), NVMe SSD temp, PWM fan state, and one-click power profile switching.

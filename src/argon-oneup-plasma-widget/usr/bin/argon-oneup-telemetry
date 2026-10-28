@@ -1,0 +1,242 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-or-later
+"""
+Argon ONE UP Hardware Telemetry Provider & CLI Dashboard
+Reads all hardware telemetry (CPU, CW2217 Battery, PWM Fan, NVMe, RAM, Power Profiles)
+Outputs JSON for the KDE Plasma 6 Dashboard Widget or an ANSI dashboard for terminal users.
+"""
+
+import sys
+import os
+import glob
+import json
+import time
+import subprocess
+
+def read_file_str(path, default=""):
+    try:
+        with open(path, "r") as f:
+            return f.read().strip()
+    except Exception:
+        return default
+
+def read_file_int(path, default=0):
+    try:
+        with open(path, "r") as f:
+            return int(f.read().strip())
+    except Exception:
+        return default
+
+def get_telemetry():
+    t0 = time.time()
+
+    # 1. CPU Frequencies & Max Limit
+    cores_mhz = []
+    for f in sorted(glob.glob("/sys/devices/system/cpu/cpu[0-9]*/cpufreq/scaling_cur_freq")):
+        val = read_file_int(f, 0)
+        if val > 0:
+            cores_mhz.append(val // 1000)
+
+    max_mhz = read_file_int("/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq", 2400000) // 1000
+    if not cores_mhz:
+        cores_mhz = [max_mhz] * 4
+
+    # CPU Temperature
+    cpu_temp = round(read_file_int("/sys/class/thermal/thermal_zone0/temp", 0) / 1000.0, 1)
+
+    # CPU Governor
+    gov = read_file_str("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor", "ondemand")
+
+    # 2. Fan & Cooling
+    fan_rpm = 0
+    pwm = 0
+    for h in glob.glob("/sys/class/hwmon/hwmon*/fan1_input"):
+        fan_rpm = read_file_int(h, 0)
+        pwm_path = os.path.join(os.path.dirname(h), "pwm1")
+        if os.path.isfile(pwm_path):
+            pwm = read_file_int(pwm_path, 0)
+        break
+    fan_percent = int(round((pwm / 255.0) * 100.0))
+
+    # 3. Battery (CW2217 via oneUpPower)
+    bat = {
+        "present": False,
+        "capacity": 0,
+        "status": "Unknown",
+        "power_w": 0.0,
+        "voltage_v": 0.0,
+        "current_ma": 0,
+        "temp_c": 0.0,
+        "cycle_count": 0,
+        "health": "Unknown",
+        "ac_online": False
+    }
+
+    bat_dir = "/sys/class/power_supply/BAT0"
+    if os.path.isdir(bat_dir):
+        bat["present"] = True
+        bat["capacity"] = read_file_int(os.path.join(bat_dir, "capacity"), 0)
+        bat["status"] = read_file_str(os.path.join(bat_dir, "status"), "Unknown")
+        bat["power_w"] = round(abs(read_file_int(os.path.join(bat_dir, "power_now"), 0)) / 1000000.0, 2)
+        bat["voltage_v"] = round(read_file_int(os.path.join(bat_dir, "voltage_now"), 0) / 1000000.0, 2)
+        bat["current_ma"] = read_file_int(os.path.join(bat_dir, "current_now"), 0) // 1000
+        bat["temp_c"] = round(read_file_int(os.path.join(bat_dir, "temp"), 0) / 10.0, 1)
+        bat["cycle_count"] = read_file_int(os.path.join(bat_dir, "cycle_count"), 0)
+        bat["health"] = read_file_str(os.path.join(bat_dir, "health"), "Good")
+
+    for ac in glob.glob("/sys/class/power_supply/AC*/online"):
+        if read_file_str(ac, "0") == "1":
+            bat["ac_online"] = True
+            break
+
+    # 4. NVMe SSD Temperature
+    nvme_temp = 0.0
+    for h in glob.glob("/sys/class/hwmon/hwmon*/name"):
+        if read_file_str(h) == "nvme":
+            t_path = os.path.join(os.path.dirname(h), "temp1_input")
+            nvme_temp = round(read_file_int(t_path, 0) / 1000.0, 1)
+            break
+
+    # 5. Memory / RAM
+    mem_total_mb = 0
+    mem_used_mb = 0
+    try:
+        with open("/proc/meminfo") as fp:
+            m = {}
+            for line in fp:
+                parts = line.split()
+                if parts:
+                    m[parts[0].rstrip(":")] = int(parts[1])
+            mem_total_mb = m.get("MemTotal", 0) // 1024
+            mem_avail_mb = m.get("MemAvailable", 0) // 1024
+            mem_used_mb = max(0, mem_total_mb - mem_avail_mb)
+    except Exception:
+        pass
+    mem_percent = (mem_used_mb * 100 // mem_total_mb) if mem_total_mb > 0 else 0
+
+    # 6. Active Power Profile
+    profile = "balanced"
+    cfg_path = "/var/lib/argon-power-profiles/config.json"
+    if os.path.isfile(cfg_path):
+        try:
+            with open(cfg_path) as fp:
+                profile = json.load(fp).get("active_profile", "balanced")
+        except Exception:
+            pass
+
+    query_ms = round((time.time() - t0) * 1000.0, 2)
+
+    return {
+        "model": "Argon ONE UP Laptop (CM5)",
+        "cpu": {
+            "cores_mhz": cores_mhz,
+            "max_mhz": max_mhz,
+            "temp_c": cpu_temp,
+            "governor": gov
+        },
+        "fan": {
+            "rpm": fan_rpm,
+            "pwm": pwm,
+            "percent": fan_percent
+        },
+        "battery": bat,
+        "storage": {
+            "nvme_temp_c": nvme_temp
+        },
+        "memory": {
+            "used_mb": mem_used_mb,
+            "total_mb": mem_total_mb,
+            "percent": mem_percent
+        },
+        "profile": profile,
+        "query_ms": query_ms
+    }
+
+def set_power_profile(target_profile):
+    if target_profile not in ("power-saver", "balanced", "performance"):
+        print(f"Error: Unknown profile '{target_profile}'. Choose: power-saver, balanced, performance", file=sys.stderr)
+        sys.exit(1)
+    try:
+        subprocess.run([
+            "gdbus", "call", "--system",
+            "--dest", "net.hadess.PowerProfiles",
+            "--object-path", "/net/hadess/PowerProfiles",
+            "--method", "org.freedesktop.DBus.Properties.Set",
+            "net.hadess.PowerProfiles", "ActiveProfile",
+            f"<'{target_profile}'>"
+        ], check=True, stdout=subprocess.DEVNULL)
+        print(f"Power profile switched to '{target_profile}'.")
+    except Exception as e:
+        print(f"Failed to switch power profile: {e}", file=sys.stderr)
+        sys.exit(1)
+
+def print_cli_dashboard(data):
+    # Colors
+    BOLD = "\033[1m"
+    CYAN = "\033[36m"
+    GREEN = "\033[32m"
+    YELLOW = "\033[33m"
+    RED = "\033[31m"
+    MAGENTA = "\033[35m"
+    RESET = "\033[0m"
+
+    cpu = data["cpu"]
+    bat = data["battery"]
+    fan = data["fan"]
+    mem = data["memory"]
+    st = data["storage"]
+    prof = data["profile"]
+
+    # Colorize temp
+    t = cpu["temp_c"]
+    t_color = GREEN if t < 50 else (YELLOW if t < 70 else RED)
+
+    # Colorize profile
+    p_color = GREEN if prof == "power-saver" else (CYAN if prof == "balanced" else MAGENTA)
+
+    print(f"\n{BOLD}{CYAN}╔════════════════════════════════════════════════════════════════════════════╗{RESET}")
+    print(f"{BOLD}{CYAN}║{RESET}  {BOLD}ARGON ONE UP HARDWARE DASHBOARD{RESET}                  {CYAN}Profile:{RESET} {p_color}{BOLD}{prof.upper():<14}{RESET}{BOLD}{CYAN}║{RESET}")
+    print(f"{BOLD}{CYAN}╠════════════════════════════════════════════════════════════════════════════╣{RESET}")
+    
+    # CPU line
+    cores_str = ", ".join(f"{c} MHz" for c in cpu["cores_mhz"])
+    print(f"{BOLD}{CYAN}║{RESET}  {BOLD}CPU:{RESET}     {cores_str:<44} (Max: {cpu['max_mhz']} MHz) {BOLD}{CYAN}║{RESET}")
+    print(f"{BOLD}{CYAN}║{RESET}  {BOLD}Temp:{RESET}    {t_color}{cpu['temp_c']} °C{RESET}  |  Governor: {cpu['governor']:<15} NVMe Temp: {st['nvme_temp_c']} °C   {BOLD}{CYAN}║{RESET}")
+    print(f"{BOLD}{CYAN}╠════════════════════════════════════════════════════════════════════════════╣{RESET}")
+    
+    # Fan line
+    fan_status = f"{fan['rpm']} RPM ({fan['percent']}%)" if fan['percent'] > 0 else "0 RPM (Silent / 0%)"
+    print(f"{BOLD}{CYAN}║{RESET}  {BOLD}Lüfter:{RESET}  {fan_status:<30} RAM: {mem['used_mb']} MB / {mem['total_mb']} MB ({mem['percent']}%) {BOLD}{CYAN}║{RESET}")
+    print(f"{BOLD}{CYAN}╠════════════════════════════════════════════════════════════════════════════╣{RESET}")
+
+    # Battery line
+    if bat["present"]:
+        b_color = GREEN if bat["capacity"] > 40 else (YELLOW if bat["capacity"] > 15 else RED)
+        ac_str = "[AC Netzteil]" if bat["ac_online"] else "[Akku]"
+        print(f"{BOLD}{CYAN}║{RESET}  {BOLD}Akku:{RESET}    {b_color}{bat['capacity']}%{RESET} ({bat['status']}) {ac_str:<14}  Leistung: {bat['power_w']} W           {BOLD}{CYAN}║{RESET}")
+        print(f"{BOLD}{CYAN}║{RESET}  {BOLD}Pack:{RESET}    {bat['voltage_v']} V  |  {bat['current_ma']} mA   |  Zyklen: {bat['cycle_count']}  |  Zustand: {bat['health']:<8}  {BOLD}{CYAN}║{RESET}")
+    else:
+        print(f"{BOLD}{CYAN}║{RESET}  {BOLD}Akku:{RESET}    Nicht vorhanden (Desktop-Betrieb)                                 {BOLD}{CYAN}║{RESET}")
+
+    print(f"{BOLD}{CYAN}╚════════════════════════════════════════════════════════════════════════════╝{RESET}")
+    print(f"  {CYAN}Abfragezeit:{RESET} {data['query_ms']} ms   |   {CYAN}Widget-Option:{RESET} --json\n")
+
+def main():
+    if "--set-profile" in sys.argv:
+        idx = sys.argv.index("--set-profile")
+        if idx + 1 < len(sys.argv):
+            set_power_profile(sys.argv[idx + 1])
+        else:
+            print("Missing profile name", file=sys.stderr)
+            sys.exit(1)
+        return
+
+    data = get_telemetry()
+
+    if "--json" in sys.argv or "-j" in sys.argv:
+        print(json.dumps(data, indent=2))
+    else:
+        print_cli_dashboard(data)
+
+if __name__ == "__main__":
+    main()
