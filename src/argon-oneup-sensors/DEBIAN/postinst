@@ -3,7 +3,10 @@ set -e
 
 # Set CAP_SYS_ADMIN file capability for namespace helper
 if [ -f /usr/bin/ksystemstats-ns-helper ]; then
-    setcap cap_sys_admin+ep /usr/bin/ksystemstats-ns-helper 2>/dev/null || chmod 4755 /usr/bin/ksystemstats-ns-helper
+    if ! setcap cap_sys_admin+ep /usr/bin/ksystemstats-ns-helper; then
+        echo "ERROR: Failed to set cap_sys_admin on /usr/bin/ksystemstats-ns-helper" >&2
+        exit 1
+    fi
     echo "[argon-oneup-sensors] Configured cap_sys_admin on /usr/bin/ksystemstats-ns-helper"
 fi
 

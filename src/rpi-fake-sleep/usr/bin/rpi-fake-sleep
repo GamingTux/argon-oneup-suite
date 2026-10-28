@@ -133,6 +133,18 @@ def set_keyboard_backlight_power(enable: bool):
         except Exception:
             pass
 
+def get_wifi_power_save() -> bool:
+    """Returns True if wlan0 802.11 power saving is currently active."""
+    for iw in ["/usr/sbin/iw", "/usr/bin/iw", "iw"]:
+        try:
+            res = subprocess.run([iw, "dev", "wlan0", "get", "power_save"],
+                                 capture_output=True, text=True, check=False)
+            if res.returncode == 0:
+                return "power save: on" in res.stdout.lower()
+        except Exception:
+            pass
+    return False
+
 def set_wifi_power_save(enable: bool):
     """Toggles 802.11 power saving on wlan0."""
     for iw in ["/usr/sbin/iw", "/usr/bin/iw", "iw"]:
@@ -191,6 +203,32 @@ def lock_sessions():
         except Exception:
             pass
 
+def get_audio_mute_state():
+    """Returns saved mute states for ALSA Master and active pipewire user sessions."""
+    state = {"amixer_muted": False, "pipewire_muted": {}}
+    try:
+        res = subprocess.run(["amixer", "get", "Master"], capture_output=True, text=True, check=False)
+        if res.returncode == 0 and "[off]" in res.stdout:
+            state["amixer_muted"] = True
+    except Exception:
+        pass
+
+    for pw in glob.glob("/run/user/*/pipewire-0"):
+        try:
+            uid = pw.split("/")[3]
+            res = subprocess.run(
+                ["sudo", "-u", f"#{uid}", "env", f"XDG_RUNTIME_DIR=/run/user/{uid}",
+                 "wpctl", "get-volume", "@DEFAULT_AUDIO_SINK@"],
+                capture_output=True, text=True, check=False
+            )
+            if res.returncode == 0 and "[MUTED]" in res.stdout:
+                state["pipewire_muted"][uid] = True
+            else:
+                state["pipewire_muted"][uid] = False
+        except Exception:
+            pass
+    return state
+
 def mute_audio():
     try:
         subprocess.run(["amixer", "set", "Master", "mute"], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -207,21 +245,26 @@ def mute_audio():
         except Exception:
             pass
 
-def unmute_audio():
+def restore_audio(saved_audio_state):
+    """Restores audio unmute only if it was not originally muted before sleep."""
+    pw_states = saved_audio_state.get("pipewire_muted", {})
     for pw in glob.glob("/run/user/*/pipewire-0"):
         try:
             uid = pw.split("/")[3]
-            subprocess.run(
-                ["sudo", "-u", f"#{uid}", "env", f"XDG_RUNTIME_DIR=/run/user/{uid}",
-                 "wpctl", "set-mute", "@DEFAULT_AUDIO_SINK@", "0"],
-                check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-            )
+            was_muted = pw_states.get(uid, False)
+            if not was_muted:
+                subprocess.run(
+                    ["sudo", "-u", f"#{uid}", "env", f"XDG_RUNTIME_DIR=/run/user/{uid}",
+                     "wpctl", "set-mute", "@DEFAULT_AUDIO_SINK@", "0"],
+                    check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+                )
         except Exception:
             pass
-    try:
-        subprocess.run(["amixer", "set", "Master", "unmute"], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    except Exception:
-        pass
+    if not saved_audio_state.get("amixer_muted", False):
+        try:
+            subprocess.run(["amixer", "set", "Master", "unmute"], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except Exception:
+            pass
 
 def blank_displays():
     """Saves current brightness and blanks all backlight and DRM displays."""
@@ -295,15 +338,22 @@ def apply_power_saving():
                 pass
 
     # 2. Throttle CPU governor to powersave and minimum clock
-    saved_governors = {}
+    saved_cpu_state = {}
     for cpu in glob.glob("/sys/devices/system/cpu/cpu[0-9]*/cpufreq"):
         gov_path = os.path.join(cpu, "scaling_governor")
         min_path = os.path.join(cpu, "cpuinfo_min_freq")
         max_path = os.path.join(cpu, "scaling_max_freq")
         if os.path.isfile(gov_path):
             try:
+                gov = "ondemand"
                 with open(gov_path, "r") as f:
-                    saved_governors[gov_path] = f.read().strip()
+                    gov = f.read().strip()
+                max_freq = None
+                if os.path.isfile(max_path):
+                    with open(max_path, "r") as f:
+                        max_freq = f.read().strip()
+                saved_cpu_state[cpu] = {"gov": gov, "max_freq": max_freq}
+
                 with open(min_path, "r") as f:
                     min_freq = f.read().strip()
                 with open(max_path, "w") as f:
@@ -313,9 +363,9 @@ def apply_power_saving():
             except Exception:
                 pass
 
-    return saved_governors
+    return saved_cpu_state
 
-def restore_power(saved_governors):
+def restore_power(saved_cpu_state):
     """Unfreezes applications and restores normal CPU clock."""
     # 1. Unfreeze cgroups v2 user apps
     for uid_dir in glob.glob("/sys/fs/cgroup/user.slice/user-*.slice/user@*.service/app.slice"):
@@ -333,12 +383,22 @@ def restore_power(saved_governors):
         max_path = os.path.join(cpu, "scaling_max_freq")
         maxinfo_path = os.path.join(cpu, "cpuinfo_max_freq")
         try:
-            if os.path.isfile(maxinfo_path):
+            state = saved_cpu_state.get(cpu, {}) if isinstance(saved_cpu_state, dict) else {}
+            if isinstance(state, dict):
+                gov = state.get("gov", "ondemand")
+                top_freq = state.get("max_freq")
+            else:
+                gov = saved_cpu_state.get(gov_path, "ondemand")
+                top_freq = None
+
+            if not top_freq and os.path.isfile(maxinfo_path):
                 with open(maxinfo_path, "r") as f:
                     top_freq = f.read().strip()
+
+            if top_freq and os.path.isfile(max_path):
                 with open(max_path, "w") as f:
                     f.write(top_freq)
-            gov = saved_governors.get(gov_path, "schedutil")
+
             with open(gov_path, "w") as f:
                 f.write(gov)
         except Exception:
@@ -382,6 +442,8 @@ def main():
     log(f"Entering sleep (lid: {initial_lid}, battery: {initial_soc}%, AC: {on_ac_init})")
 
     saved_bt_blocked = get_bluetooth_blocked()
+    saved_wifi_powersave = get_wifi_power_save()
+    saved_audio_mute = get_audio_mute_state()
 
     # 1. Lock screen
     lock_sessions()
@@ -393,7 +455,7 @@ def main():
     saved_brightness = blank_displays()
 
     # 4. Freeze apps & throttle CPU
-    saved_governors = apply_power_saving()
+    saved_cpu_state = apply_power_saving()
 
     # 5. Radio & Audio power savings
     if cfg.get("ENABLE_AUDIO_AUTOSUSPEND", True):
@@ -529,10 +591,10 @@ def main():
         if cfg.get("SUSPEND_BLUETOOTH_BLOCK", True) and not saved_bt_blocked:
             set_bluetooth_power(True)
         if cfg.get("SUSPEND_WIFI_POWERSAVE", True):
-            set_wifi_power_save(False)
-        restore_power(saved_governors)
+            set_wifi_power_save(saved_wifi_powersave)
+        restore_power(saved_cpu_state)
         restore_displays(saved_brightness)
-        unmute_audio()
+        restore_audio(saved_audio_mute)
         log("Wakeup complete, normal power & display restored")
 
     sys.exit(0)

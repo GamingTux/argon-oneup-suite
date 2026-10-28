@@ -1,13 +1,13 @@
 Package: argon-oneup-sensors
-Version: 1.0.0
+Version: 1.0.1
 Architecture: arm64
-Maintainer: Playx <playx@argon-oneup.local>
+Maintainer: GamingTux <gamingtux@users.noreply.github.com>
 Section: utils
 Priority: optional
 Depends: libcap2-bin
 Recommends: lm-sensors
 Provides: rpi5-kde-sensors-fix
-Homepage: https://github.com/argon40tech/argon-oneup
+Homepage: https://github.com/GamingTux/argon-oneup-suite
 Description: Argon ONE UP & Raspberry Pi CM5 Hardware Sensors & KDE Integration
  Routes and aliases all physical hardware sensors (CPU thermal, PWM fan RPM,
  NVMe SSD temperature, CW2217 battery telemetry) via standard lm-sensors

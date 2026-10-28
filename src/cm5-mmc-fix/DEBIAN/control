@@ -1,11 +1,11 @@
 Package: cm5-mmc-fix
-Version: 1.0.0
+Version: 1.0.1
 Architecture: all
-Maintainer: Playx <playx@argon-oneup.local>
+Maintainer: GamingTux <gamingtux@users.noreply.github.com>
 Section: admin
 Priority: optional
 Provides: cm5-sd-delay-fix, cm5-sd-fix
-Homepage: https://github.com/argon40tech/argon-oneup
+Homepage: https://github.com/GamingTux/argon-oneup-suite
 Description: Raspberry Pi CM5 / CM5 Lite Empty MicroSD Slot Shutdown Delay Fix
  Fixes the 30-80s shutdown/reboot hang on Raspberry Pi CM5 Lite when the
  microSD slot is empty.

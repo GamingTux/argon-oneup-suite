@@ -16,6 +16,8 @@ if [ -n "$CONFIG" ]; then
     fi
 fi
 
+getent group i2c >/dev/null || groupadd -r i2c 2>/dev/null || true
+
 systemctl daemon-reload 2>/dev/null || true
 systemctl enable argon-backlight.service 2>/dev/null || true
 udevadm control --reload-rules 2>/dev/null || true

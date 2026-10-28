@@ -8,6 +8,11 @@ DIST_DIR="${REPO_DIR}/dist"
 mkdir -p "${DIST_DIR}"
 rm -f "${DIST_DIR}"/*.deb
 
+echo "=== Cleaning temporary files ==="
+find "${SRC_DIR}" -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
+find "${SRC_DIR}" -type f -name "*.pyc" -delete 2>/dev/null || true
+find "${SRC_DIR}" -type f -name "*~" -delete 2>/dev/null || true
+
 echo "=== Building Argon ONE UP Debian Packages ==="
 
 for pkg in argon-oneup-backlight argon-oneup-battery argon-oneup-lid argon-oneup-sensors argon-power-profiles cm5-mmc-fix rpi-fake-sleep argon-oneup-suite; do

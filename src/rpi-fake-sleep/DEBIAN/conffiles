@@ -1,0 +1,5 @@
+/etc/rpi-fake-sleep.conf
+/etc/systemd/logind.conf.d/10-rpi-fake-sleep.conf
+/etc/systemd/sleep.conf.d/99-rpi-fake-sleep.conf
+/etc/systemd/system/systemd-suspend.service.d/10-rpi-fake-sleep.conf
+/etc/udev/rules.d/99-argon-usb-powersave.rules

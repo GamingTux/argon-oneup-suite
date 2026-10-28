@@ -1,10 +1,10 @@
 Package: rpi-fake-sleep
-Version: 1.0.0
+Version: 1.0.1
 Architecture: all
-Maintainer: Playx <playx@argon-oneup.local>
+Maintainer: GamingTux <gamingtux@users.noreply.github.com>
 Section: admin
 Priority: optional
-Homepage: https://github.com/argon40tech/argon-oneup
+Homepage: https://github.com/GamingTux/argon-oneup-suite
 Depends: python3, python3-gi, systemd
 Description: Universal Userspace Sleep & Standby Manager for Raspberry Pi
  Enables native Standby/Ruhezustand on Raspberry Pi systems where the kernel
