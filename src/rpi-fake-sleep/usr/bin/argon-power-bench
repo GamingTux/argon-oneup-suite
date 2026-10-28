@@ -172,10 +172,18 @@ def set_audio_autosuspend():
         except Exception:
             pass
 
-    for pm_ctrl in (
+    for usb_ctrl in (
         glob.glob("/sys/bus/platform/devices/*.usb/power/control")
         + glob.glob("/sys/bus/platform/devices/xhci-hcd.*/power/control")
-        + glob.glob("/sys/bus/platform/devices/*.codec/power/control")
+    ):
+        try:
+            with open(usb_ctrl, "w") as f:
+                f.write("on")
+        except Exception:
+            pass
+
+    for pm_ctrl in (
+        glob.glob("/sys/bus/platform/devices/*.codec/power/control")
         + glob.glob("/sys/bus/platform/devices/*.isp/power/control")
         + glob.glob("/sys/bus/platform/devices/*.pisp_be/power/control")
     ):

@@ -127,11 +127,17 @@ def apply_system_power_tweaks(profile):
             if os.path.islink(drv_link) and os.path.basename(os.readlink(drv_link)) == "usbhid":
                 write_sysfs("/sys/bus/usb/drivers/usbhid/unbind", os.path.basename(sibling))
 
-    # Enable runtime PM on platform USB xHCI controllers and unused ISP/codec blocks
-    for pm_ctrl in (
+    # Keep RP1 xHCI (xhci-hcd.*) and DWC2 (*.usb) platform controllers at 'on' so
+    # empty USB 3.0 / 3.1 ports never lose hotplug detection, while enabling runtime PM
+    # on unused ISP/codec blocks
+    for usb_ctrl in (
         glob.glob("/sys/bus/platform/devices/*.usb/power/control")
         + glob.glob("/sys/bus/platform/devices/xhci-hcd.*/power/control")
-        + glob.glob("/sys/bus/platform/devices/*.codec/power/control")
+    ):
+        write_sysfs(usb_ctrl, "on")
+
+    for pm_ctrl in (
+        glob.glob("/sys/bus/platform/devices/*.codec/power/control")
         + glob.glob("/sys/bus/platform/devices/*.isp/power/control")
         + glob.glob("/sys/bus/platform/devices/*.pisp_be/power/control")
     ):
