@@ -1,11 +1,11 @@
 Package: argon-oneup-suite
-Version: 1.2.0
+Version: 1.2.1
 Architecture: all
 Maintainer: GamingTux <gamingtux@users.noreply.github.com>
 Section: admin
 Priority: optional
 Homepage: https://github.com/GamingTux/argon-oneup-suite
-Depends: argon-oneup-backlight (>= 1.1.0), argon-oneup-battery (>= 1.1.8), argon-oneup-lid (>= 1.1.0), argon-oneup-sensors (>= 1.1.8), argon-power-profiles (>= 1.1.8), cm5-mmc-fix (>= 1.1.0), rpi-fake-sleep (>= 1.2.0)
+Depends: argon-oneup-backlight (>= 1.1.0), argon-oneup-battery (>= 1.1.8), argon-oneup-lid (>= 1.1.0), argon-oneup-sensors (>= 1.1.8), argon-power-profiles (>= 1.2.1), cm5-mmc-fix (>= 1.1.0), rpi-fake-sleep (>= 1.2.1)
 Recommends: argon-oneup-plasma-widget (>= 1.1.9)
 Description: Complete hardware support suite for Argon ONE UP laptop
  Metapackage that installs all drivers, services, and utilities for the

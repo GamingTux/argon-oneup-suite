@@ -79,6 +79,30 @@ def apply_system_power_tweaks(profile):
         write_sysfs(nvme_ctrl, "on")
     write_sysfs("/sys/module/pcie_aspm/parameters/policy", "powersave")
 
+    # Schedule kernel workqueues onto already-awake cores instead of waking sleeping WFI cores
+    write_sysfs("/sys/module/workqueue/parameters/power_efficient", "Y")
+
+    # Enable native transparent USB autosuspend on USB audio devices by unbinding
+    # any unused composite usbhid sub-interface (e.g. 1-1.1:1.3) that blocks runtime suspend
+    for audio_intf in glob.glob("/sys/bus/usb/drivers/snd-usb-audio/*:*"):
+        usb_dev = os.path.realpath(os.path.join(audio_intf, ".."))
+        write_sysfs(os.path.join(usb_dev, "power/autosuspend_delay_ms"), "500")
+        write_sysfs(os.path.join(usb_dev, "power/control"), "auto")
+        for sibling in glob.glob(os.path.join(usb_dev, "*:*")):
+            drv_link = os.path.join(sibling, "driver")
+            if os.path.islink(drv_link) and os.path.basename(os.readlink(drv_link)) == "usbhid":
+                write_sysfs("/sys/bus/usb/drivers/usbhid/unbind", os.path.basename(sibling))
+
+    # Enable runtime PM on platform USB xHCI controllers and unused ISP/codec blocks
+    for pm_ctrl in (
+        glob.glob("/sys/bus/platform/devices/*.usb/power/control")
+        + glob.glob("/sys/bus/platform/devices/xhci-hcd.*/power/control")
+        + glob.glob("/sys/bus/platform/devices/*.codec/power/control")
+        + glob.glob("/sys/bus/platform/devices/*.isp/power/control")
+        + glob.glob("/sys/bus/platform/devices/*.pisp_be/power/control")
+    ):
+        write_sysfs(pm_ctrl, "auto")
+
     if profile == "power-saver":
         # Safe VFS/RAM writeback coalescing (15s instead of 5s) without touching PCIe link state
         write_sysfs("/proc/sys/vm/dirty_writeback_centisecs", "1500")
