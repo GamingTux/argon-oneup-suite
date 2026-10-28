@@ -73,26 +73,17 @@ def apply_governor(profile):
     print(f"[power-profiles] Governor set to '{gov}' for profile '{profile}'")
 
 def apply_system_power_tweaks(profile):
+    # Note: Keep NVMe PCIe runtime PM ('power/control') at 'on' on BCM2712 (PCIe Gen 3),
+    # as PCIe D3 / ASPM powersupersave (L1.2) can cause link recovery timeouts on RPi 5 / CM5.
+    for nvme_ctrl in glob.glob("/sys/class/nvme/nvme*/device/power/control"):
+        write_sysfs(nvme_ctrl, "on")
+    write_sysfs("/sys/module/pcie_aspm/parameters/policy", "powersave")
+
     if profile == "power-saver":
-        # Allow NVMe SSD PCIe device to enter runtime low-power states
-        for nvme_ctrl in glob.glob("/sys/class/nvme/nvme*/device/power/control"):
-            write_sysfs(nvme_ctrl, "auto")
-        if not write_sysfs("/sys/module/pcie_aspm/parameters/policy", "powersupersave"):
-            write_sysfs("/sys/module/pcie_aspm/parameters/policy", "powersave")
-        # Coalesce disk writebacks to 15s so NVMe stays asleep longer
+        # Safe VFS/RAM writeback coalescing (15s instead of 5s) without touching PCIe link state
         write_sysfs("/proc/sys/vm/dirty_writeback_centisecs", "1500")
         write_sysfs("/proc/sys/vm/laptop_mode", "5")
-    elif profile == "balanced":
-        for nvme_ctrl in glob.glob("/sys/class/nvme/nvme*/device/power/control"):
-            write_sysfs(nvme_ctrl, "auto")
-        write_sysfs("/sys/module/pcie_aspm/parameters/policy", "powersave")
-        write_sysfs("/proc/sys/vm/dirty_writeback_centisecs", "500")
-        write_sysfs("/proc/sys/vm/laptop_mode", "0")
-    else:  # performance
-        for nvme_ctrl in glob.glob("/sys/class/nvme/nvme*/device/power/control"):
-            write_sysfs(nvme_ctrl, "on")
-        if not write_sysfs("/sys/module/pcie_aspm/parameters/policy", "performance"):
-            write_sysfs("/sys/module/pcie_aspm/parameters/policy", "default")
+    else:  # balanced or performance
         write_sysfs("/proc/sys/vm/dirty_writeback_centisecs", "500")
         write_sysfs("/proc/sys/vm/laptop_mode", "0")
 
