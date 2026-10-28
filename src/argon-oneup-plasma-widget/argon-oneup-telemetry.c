@@ -3,8 +3,59 @@
 #include <string.h>
 #include <unistd.h>
 #include <dirent.h>
+#include <mntent.h>
+#include <sys/statvfs.h>
 #include <time.h>
 #include <sys/time.h>
+
+#define MAX_DISKS 8
+
+typedef struct {
+    char name[64];
+    char mount[128];
+    char fsname[64];
+    char icon[32];
+    double used_gb;
+    double total_gb;
+    int percent;
+} DiskInfo;
+
+typedef struct {
+    int cores_mhz[4];
+    int max_mhz;
+    float cpu_temp_c;
+    char governor[32];
+
+    int gpu_percent;
+    char gpu_name[32];
+
+    int bat_present;
+    int bat_capacity;
+    char bat_status[32];
+    double bat_power_w;
+    double bat_voltage_v;
+    long bat_current_ma;
+    float bat_temp_c;
+    long bat_cycle_count;
+    char bat_health[32];
+    int ac_online;
+
+    long mem_total_mb;
+    long mem_used_mb;
+    int mem_percent;
+
+    DiskInfo disks[MAX_DISKS];
+    int num_disks;
+
+    float nvme_temp_c;
+
+    int fan_rpm;
+    int fan_pwm;
+    int fan_percent;
+
+    char profile[32];
+    double query_ms;
+} Telemetry;
 
 static long read_int(const char *path, long def_val) {
     FILE *f = fopen(path, "r");
@@ -33,31 +84,108 @@ static void read_str(const char *path, char *buf, size_t maxlen, const char *def
     fclose(f);
 }
 
-typedef struct {
-    int cores_mhz[4];
-    int max_mhz;
-    float temp_c;
-    char governor[32];
-    int fan_rpm;
-    int fan_pwm;
-    int fan_percent;
-    int bat_present;
-    int bat_capacity;
-    char bat_status[32];
-    double bat_power_w;
-    double bat_voltage_v;
-    long bat_current_ma;
-    float bat_temp_c;
-    long bat_cycle_count;
-    char bat_health[32];
-    int ac_online;
-    float nvme_temp_c;
-    long mem_total_mb;
-    long mem_used_mb;
-    int mem_percent;
-    char profile[32];
-    double query_ms;
-} Telemetry;
+static int get_gpu_load(void) {
+    FILE *f = fopen("/sys/devices/platform/axi/1002000000.v3d/gpu_stats", "r");
+    if (!f) return 0;
+
+    char line[128];
+    long long cur_ts = 0, cur_rt = 0;
+    while (fgets(line, sizeof(line), f)) {
+        char q[32];
+        long long t, jobs, rt;
+        if (sscanf(line, "%31s %lld %lld %lld", q, &t, &jobs, &rt) == 4) {
+            cur_ts = t;
+            if (strcmp(q, "bin") == 0 || strcmp(q, "render") == 0 || strcmp(q, "tfu") == 0) {
+                cur_rt += rt;
+            }
+        }
+    }
+    fclose(f);
+
+    long long prev_ts = 0, prev_rt = 0;
+    FILE *pf = fopen("/dev/shm/argon_gpu_prev", "r");
+    if (pf) {
+        if (fscanf(pf, "%lld %lld", &prev_ts, &prev_rt) != 2) {
+            prev_ts = 0;
+            prev_rt = 0;
+        }
+        fclose(pf);
+    }
+
+    int percent = 0;
+    if (prev_ts > 0 && cur_ts > prev_ts && cur_rt >= prev_rt) {
+        long long d_ts = cur_ts - prev_ts;
+        long long d_rt = cur_rt - prev_rt;
+        if (d_ts > 0) {
+            percent = (int)((d_rt * 100) / d_ts);
+            if (percent > 100) percent = 100;
+        }
+    }
+
+    pf = fopen("/dev/shm/argon_gpu_prev", "w");
+    if (pf) {
+        fprintf(pf, "%lld %lld\n", cur_ts, cur_rt);
+        fclose(pf);
+    }
+    return percent;
+}
+
+static void collect_disks(Telemetry *t) {
+    FILE *f = setmntent("/proc/mounts", "r");
+    if (!f) return;
+
+    struct mntent *ent;
+    while ((ent = getmntent(f)) != NULL && t->num_disks < MAX_DISKS) {
+        if (strncmp(ent->mnt_fsname, "/dev/", 5) != 0) continue;
+        if (strncmp(ent->mnt_fsname, "/dev/loop", 9) == 0) continue;
+        if (strncmp(ent->mnt_fsname, "/dev/zram", 9) == 0) continue;
+        if (strcmp(ent->mnt_dir, "/boot/firmware") == 0) continue;
+        if (strcmp(ent->mnt_dir, "/boot") == 0) continue;
+
+        // Avoid duplicate Btrfs subvolumes on the same root device
+        int already_added = 0;
+        for (int i = 0; i < t->num_disks; i++) {
+            if (strcmp(t->disks[i].fsname, ent->mnt_fsname) == 0) {
+                already_added = 1;
+                break;
+            }
+        }
+        if (already_added) continue;
+
+        struct statvfs s;
+        if (statvfs(ent->mnt_dir, &s) == 0 && s.f_blocks > 0) {
+            DiskInfo *d = &t->disks[t->num_disks];
+            snprintf(d->fsname, sizeof(d->fsname), "%s", ent->mnt_fsname);
+            snprintf(d->mount, sizeof(d->mount), "%s", ent->mnt_dir);
+
+            if (strncmp(ent->mnt_fsname, "/dev/nvme", 9) == 0) {
+                snprintf(d->name, sizeof(d->name), "NVMe SSD");
+                snprintf(d->icon, sizeof(d->icon), "drive-harddisk");
+            } else if (strncmp(ent->mnt_fsname, "/dev/mmcblk", 11) == 0) {
+                snprintf(d->name, sizeof(d->name), "SD-Karte");
+                snprintf(d->icon, sizeof(d->icon), "media-flash-sd");
+            } else if (strncmp(ent->mnt_fsname, "/dev/sd", 7) == 0) {
+                const char *base = strrchr(ent->mnt_dir, '/');
+                if (base && strlen(base) > 1 && strcmp(ent->mnt_dir, "/media") != 0) {
+                    snprintf(d->name, sizeof(d->name), "USB: %s", base + 1);
+                } else {
+                    snprintf(d->name, sizeof(d->name), "USB-Stick");
+                }
+                snprintf(d->icon, sizeof(d->icon), "drive-removable-media-usb");
+            } else {
+                snprintf(d->name, sizeof(d->name), "Laufwerk (%s)", ent->mnt_dir);
+                snprintf(d->icon, sizeof(d->icon), "drive-harddisk");
+            }
+
+            d->total_gb = (double)s.f_blocks * s.f_frsize / (1024.0 * 1024.0 * 1024.0);
+            double free_gb = (double)s.f_bavail * s.f_frsize / (1024.0 * 1024.0 * 1024.0);
+            d->used_gb = (d->total_gb > free_gb) ? (d->total_gb - free_gb) : 0.0;
+            d->percent = (d->total_gb > 0) ? (int)((d->used_gb * 100.0) / d->total_gb) : 0;
+            t->num_disks++;
+        }
+    }
+    endmntent(f);
+}
 
 static void collect_telemetry(Telemetry *t) {
     struct timeval tv0, tv1;
@@ -65,7 +193,7 @@ static void collect_telemetry(Telemetry *t) {
 
     memset(t, 0, sizeof(*t));
 
-    // 1. CPU Cores & Max Freq
+    // 1. CPU Cores & Governor
     t->max_mhz = (int)(read_int("/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq", 2400000) / 1000);
     char path[128];
     for (int i = 0; i < 4; i++) {
@@ -73,10 +201,14 @@ static void collect_telemetry(Telemetry *t) {
         long val = read_int(path, 0);
         t->cores_mhz[i] = (val > 0) ? (int)(val / 1000) : t->max_mhz;
     }
-    t->temp_c = read_int("/sys/class/thermal/thermal_zone0/temp", 0) / 1000.0f;
+    t->cpu_temp_c = read_int("/sys/class/thermal/thermal_zone0/temp", 0) / 1000.0f;
     read_str("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor", t->governor, sizeof(t->governor), "ondemand");
 
-    // 2. Fan & Cooling (scan hwmon)
+    // 2. GPU Load (V3D)
+    t->gpu_percent = get_gpu_load();
+    snprintf(t->gpu_name, sizeof(t->gpu_name), "VideoCore VII (V3D)");
+
+    // 3. Fan & NVMe Hwmon
     DIR *dir = opendir("/sys/class/hwmon");
     if (dir) {
         struct dirent *de;
@@ -99,7 +231,7 @@ static void collect_telemetry(Telemetry *t) {
         closedir(dir);
     }
 
-    // 3. Battery (CW2217 via oneUpPower)
+    // 4. Battery (CW2217 via oneUpPower)
     if (access("/sys/class/power_supply/BAT0", F_OK) == 0) {
         t->bat_present = 1;
         t->bat_capacity = (int)read_int("/sys/class/power_supply/BAT0/capacity", 0);
@@ -126,7 +258,7 @@ static void collect_telemetry(Telemetry *t) {
         closedir(dir);
     }
 
-    // 4. Memory (/proc/meminfo)
+    // 5. Memory (/proc/meminfo)
     FILE *mf = fopen("/proc/meminfo", "r");
     if (mf) {
         char line[128];
@@ -142,7 +274,10 @@ static void collect_telemetry(Telemetry *t) {
         t->mem_percent = (total_kb > 0) ? (int)((used_kb * 100) / total_kb) : 0;
     }
 
-    // 5. Active Profile
+    // 6. Disks & Mounts
+    collect_disks(t);
+
+    // 7. Active Profile
     snprintf(t->profile, sizeof(t->profile), "balanced");
     FILE *cf = fopen("/var/lib/argon-power-profiles/config.json", "r");
     if (cf) {
@@ -172,13 +307,12 @@ static void print_json(const Telemetry *t) {
            t->cores_mhz[0], t->cores_mhz[1], t->cores_mhz[2], t->cores_mhz[3]);
     printf("    ],\n");
     printf("    \"max_mhz\": %d,\n", t->max_mhz);
-    printf("    \"temp_c\": %.1f,\n", t->temp_c);
+    printf("    \"temp_c\": %.1f,\n", t->cpu_temp_c);
     printf("    \"governor\": \"%s\"\n", t->governor);
     printf("  },\n");
-    printf("  \"fan\": {\n");
-    printf("    \"rpm\": %d,\n", t->fan_rpm);
-    printf("    \"pwm\": %d,\n", t->fan_pwm);
-    printf("    \"percent\": %d\n", t->fan_percent);
+    printf("  \"gpu\": {\n");
+    printf("    \"percent\": %d,\n", t->gpu_percent);
+    printf("    \"name\": \"%s\"\n", t->gpu_name);
     printf("  },\n");
     printf("  \"battery\": {\n");
     printf("    \"present\": %s,\n", t->bat_present ? "true" : "false");
@@ -192,13 +326,33 @@ static void print_json(const Telemetry *t) {
     printf("    \"health\": \"%s\",\n", t->bat_health);
     printf("    \"ac_online\": %s\n", t->ac_online ? "true" : "false");
     printf("  },\n");
-    printf("  \"storage\": {\n");
-    printf("    \"nvme_temp_c\": %.1f\n", t->nvme_temp_c);
-    printf("  },\n");
     printf("  \"memory\": {\n");
     printf("    \"used_mb\": %ld,\n", t->mem_used_mb);
     printf("    \"total_mb\": %ld,\n", t->mem_total_mb);
     printf("    \"percent\": %d\n", t->mem_percent);
+    printf("  },\n");
+    printf("  \"disks\": [\n");
+    for (int i = 0; i < t->num_disks; i++) {
+        const DiskInfo *d = &t->disks[i];
+        printf("    {\n");
+        printf("      \"name\": \"%s\",\n", d->name);
+        printf("      \"mount\": \"%s\",\n", d->mount);
+        printf("      \"icon\": \"%s\",\n", d->icon);
+        printf("      \"used_gb\": %.1f,\n", d->used_gb);
+        printf("      \"total_gb\": %.1f,\n", d->total_gb);
+        printf("      \"percent\": %d\n", d->percent);
+        printf("    }%s\n", (i + 1 < t->num_disks) ? "," : "");
+    }
+    printf("  ],\n");
+    printf("  \"temperatures\": {\n");
+    printf("    \"cpu_c\": %.1f,\n", t->cpu_temp_c);
+    printf("    \"battery_c\": %.1f,\n", t->bat_temp_c);
+    printf("    \"nvme_c\": %.1f\n", t->nvme_temp_c);
+    printf("  },\n");
+    printf("  \"fan\": {\n");
+    printf("    \"rpm\": %d,\n", t->fan_rpm);
+    printf("    \"pwm\": %d,\n", t->fan_pwm);
+    printf("    \"percent\": %d\n", t->fan_percent);
     printf("  },\n");
     printf("  \"profile\": \"%s\",\n", t->profile);
     printf("  \"query_ms\": %.2f\n", t->query_ms);
@@ -214,7 +368,6 @@ static void print_dashboard(const Telemetry *t) {
     const char *MAGENTA = "\033[35m";
     const char *RESET = "\033[0m";
 
-    const char *t_color = (t->temp_c < 50.0f) ? GREEN : ((t->temp_c < 70.0f) ? YELLOW : RED);
     const char *p_color = (strcmp(t->profile, "power-saver") == 0) ? GREEN :
                           ((strcmp(t->profile, "balanced") == 0) ? CYAN : MAGENTA);
 
@@ -229,22 +382,17 @@ static void print_dashboard(const Telemetry *t) {
            BOLD, CYAN, RESET, BOLD, RESET, CYAN, RESET, p_color, BOLD, prof_upper, RESET, BOLD, CYAN, RESET);
     printf("%s%s╠════════════════════════════════════════════════════════════════════════════╣%s\n", BOLD, CYAN, RESET);
 
+    // CPU Cores & GPU
     char cores_buf[64];
     snprintf(cores_buf, sizeof(cores_buf), "%d MHz, %d MHz, %d MHz, %d MHz",
              t->cores_mhz[0], t->cores_mhz[1], t->cores_mhz[2], t->cores_mhz[3]);
     printf("%s%s║%s  %sCPU:%s     %-44s (Max: %d MHz) %s%s║%s\n",
            BOLD, CYAN, RESET, BOLD, RESET, cores_buf, t->max_mhz, BOLD, CYAN, RESET);
-    printf("%s%s║%s  %sTemp:%s    %s%.1f °C%s  |  Governor: %-15s NVMe Temp: %.1f °C   %s%s║%s\n",
-           BOLD, CYAN, RESET, BOLD, RESET, t_color, t->temp_c, RESET, t->governor, t->nvme_temp_c, BOLD, CYAN, RESET);
+    printf("%s%s║%s  %sGPU:%s     %-25s  Auslastung: %2d%%   Governor: %-10s  %s%s║%s\n",
+           BOLD, CYAN, RESET, BOLD, RESET, t->gpu_name, t->gpu_percent, t->governor, BOLD, CYAN, RESET);
     printf("%s%s╠════════════════════════════════════════════════════════════════════════════╣%s\n", BOLD, CYAN, RESET);
 
-    char fan_buf[64];
-    if (t->fan_percent > 0) snprintf(fan_buf, sizeof(fan_buf), "%d RPM (%d%%)", t->fan_rpm, t->fan_percent);
-    else snprintf(fan_buf, sizeof(fan_buf), "0 RPM (Silent / 0%%)");
-    printf("%s%s║%s  %sLüfter:%s  %-30s RAM: %ld MB / %ld MB (%d%%) %s%s║%s\n",
-           BOLD, CYAN, RESET, BOLD, RESET, fan_buf, t->mem_used_mb, t->mem_total_mb, t->mem_percent, BOLD, CYAN, RESET);
-    printf("%s%s╠════════════════════════════════════════════════════════════════════════════╣%s\n", BOLD, CYAN, RESET);
-
+    // Battery
     if (t->bat_present) {
         const char *b_color = (t->bat_capacity > 40) ? GREEN : ((t->bat_capacity > 15) ? YELLOW : RED);
         const char *ac_str = t->ac_online ? "[AC Netzteil]" : "[Akku]";
@@ -256,6 +404,26 @@ static void print_dashboard(const Telemetry *t) {
         printf("%s%s║%s  %sAkku:%s    Nicht vorhanden (Desktop-Betrieb)                                 %s%s║%s\n",
                BOLD, CYAN, RESET, BOLD, RESET, BOLD, CYAN, RESET);
     }
+    printf("%s%s╠════════════════════════════════════════════════════════════════════════════╣%s\n", BOLD, CYAN, RESET);
+
+    // Speicher
+    printf("%s%s║%s  %sRAM:%s     %ld MB / %ld MB (%d%%)                                           %s%s║%s\n",
+           BOLD, CYAN, RESET, BOLD, RESET, t->mem_used_mb, t->mem_total_mb, t->mem_percent, BOLD, CYAN, RESET);
+    for (int i = 0; i < t->num_disks; i++) {
+        const DiskInfo *d = &t->disks[i];
+        printf("%s%s║%s  %s%-8s%s %.1f / %.1f GB (%d%%) auf %-37s %s%s║%s\n",
+               BOLD, CYAN, RESET, BOLD, d->name, RESET, d->used_gb, d->total_gb, d->percent, d->mount, BOLD, CYAN, RESET);
+    }
+    printf("%s%s╠════════════════════════════════════════════════════════════════════════════╣%s\n", BOLD, CYAN, RESET);
+
+    // Temperaturen & Lüfter
+    char fan_buf[32];
+    if (t->fan_percent > 0) snprintf(fan_buf, sizeof(fan_buf), "%d RPM (%d%%)", t->fan_rpm, t->fan_percent);
+    else snprintf(fan_buf, sizeof(fan_buf), "0 RPM (Silent)");
+    printf("%s%s║%s  %sTemp:%s    CPU: %.1f °C  |  Akku: %.1f °C  |  NVMe: %.1f °C                     %s%s║%s\n",
+           BOLD, CYAN, RESET, BOLD, RESET, t->cpu_temp_c, t->bat_temp_c, t->nvme_temp_c, BOLD, CYAN, RESET);
+    printf("%s%s║%s  %sLüfter:%s  %-65s %s%s║%s\n",
+           BOLD, CYAN, RESET, BOLD, RESET, fan_buf, BOLD, CYAN, RESET);
 
     printf("%s%s╚════════════════════════════════════════════════════════════════════════════╝%s\n", BOLD, CYAN, RESET);
     printf("  %sAbfragezeit:%s %.2f ms   |   %sWidget-Option:%s --json\n\n",
