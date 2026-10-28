@@ -31,6 +31,16 @@ GOVERNOR_MAP = {
     "performance": "performance"
 }
 
+def write_sysfs(path, value):
+    try:
+        if os.path.isfile(path):
+            with open(path, "w") as fp:
+                fp.write(str(value))
+            return True
+    except OSError:
+        pass
+    return False
+
 def apply_governor(profile):
     gov = GOVERNOR_MAP.get(profile, "ondemand")
     seen_policies = set()
@@ -50,12 +60,41 @@ def apply_governor(profile):
                     fp.write(top_freq)
         except OSError:
             pass
-        try:
-            with open(gov_path, "w") as fp:
-                fp.write(gov)
-        except OSError:
-            pass
+        write_sysfs(gov_path, gov)
+
+    if gov == "ondemand":
+        ondemand_dirs = ["/sys/devices/system/cpu/cpufreq/ondemand"] + glob.glob("/sys/devices/system/cpu/cpufreq/policy*/ondemand")
+        for od_dir in ondemand_dirs:
+            if os.path.isdir(od_dir):
+                write_sysfs(os.path.join(od_dir, "up_threshold"), "60")
+                write_sysfs(os.path.join(od_dir, "sampling_down_factor"), "5")
+                write_sysfs(os.path.join(od_dir, "io_is_busy"), "1")
+
     print(f"[power-profiles] Governor set to '{gov}' for profile '{profile}'")
+
+def apply_system_power_tweaks(profile):
+    if profile == "power-saver":
+        # Allow NVMe SSD PCIe device to enter runtime low-power states
+        for nvme_ctrl in glob.glob("/sys/class/nvme/nvme*/device/power/control"):
+            write_sysfs(nvme_ctrl, "auto")
+        if not write_sysfs("/sys/module/pcie_aspm/parameters/policy", "powersupersave"):
+            write_sysfs("/sys/module/pcie_aspm/parameters/policy", "powersave")
+        # Coalesce disk writebacks to 15s so NVMe stays asleep longer
+        write_sysfs("/proc/sys/vm/dirty_writeback_centisecs", "1500")
+        write_sysfs("/proc/sys/vm/laptop_mode", "5")
+    elif profile == "balanced":
+        for nvme_ctrl in glob.glob("/sys/class/nvme/nvme*/device/power/control"):
+            write_sysfs(nvme_ctrl, "auto")
+        write_sysfs("/sys/module/pcie_aspm/parameters/policy", "powersave")
+        write_sysfs("/proc/sys/vm/dirty_writeback_centisecs", "500")
+        write_sysfs("/proc/sys/vm/laptop_mode", "0")
+    else:  # performance
+        for nvme_ctrl in glob.glob("/sys/class/nvme/nvme*/device/power/control"):
+            write_sysfs(nvme_ctrl, "on")
+        if not write_sysfs("/sys/module/pcie_aspm/parameters/policy", "performance"):
+            write_sysfs("/sys/module/pcie_aspm/parameters/policy", "default")
+        write_sysfs("/proc/sys/vm/dirty_writeback_centisecs", "500")
+        write_sysfs("/proc/sys/vm/laptop_mode", "0")
 
 def apply_wifi_powersave(profile):
     enable = (profile == "power-saver")
@@ -184,6 +223,7 @@ class ProfileManager:
         self.save_config()
 
         apply_governor(profile)
+        apply_system_power_tweaks(profile)
         apply_wifi_powersave(profile)
 
         target_b = self.config["brightness"].get(profile, 70)
