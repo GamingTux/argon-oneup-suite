@@ -20,6 +20,11 @@
 #include <string.h>
 
 static int drop_all_caps(void) {
+    gid_t rgid = getgid();
+    uid_t ruid = getuid();
+    if (setresgid(rgid, rgid, rgid) != 0 || setresuid(ruid, ruid, ruid) != 0) {
+        return -1;
+    }
     struct __user_cap_header_struct hdr;
     struct __user_cap_data_struct data[2];
     memset(&hdr, 0, sizeof(hdr));

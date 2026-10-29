@@ -68,30 +68,30 @@ if command -v dkms >/dev/null 2>&1; then
     fi
 fi
 
-# Enable I2C1 and load battery overlay at runtime if possible (no reboot required)
-command -v dtparam >/dev/null 2>&1 && dtparam i2c_arm=on 2>/dev/null || true
-if [ -n "$BOOT_DIR" ] && [ -f "$BOOT_DIR/overlays/argon-oneup-battery.dtbo" ] && [ ! -e /sys/bus/i2c/devices/1-0064 ]; then
-    if command -v dtoverlay >/dev/null 2>&1; then
-        dtoverlay -d "$BOOT_DIR/overlays" argon-oneup-battery 2>/dev/null || dtoverlay argon-oneup-battery 2>/dev/null || true
-    fi
-fi
-
 # Clean up legacy /etc/modules entry and duplicate sensors config from older versions
 if [ -f /etc/modules ]; then
     sed -i '/^oneUpPower$/d' /etc/modules 2>/dev/null || true
 fi
 rm -f /etc/sensors.d/argon-oneup-sensors.conf 2>/dev/null || true
 
-# Try loading the module immediately
-modprobe oneUpPower 2>/dev/null || true
+# Enable I2C1, load battery overlay and module at runtime if running on live hardware (not inside chroot)
+if [ "$(stat -c %d:%i / 2>/dev/null)" = "$(stat -c %d:%i /proc/1/root/. 2>/dev/null)" ]; then
+    command -v dtparam >/dev/null 2>&1 && dtparam i2c_arm=on 2>/dev/null || true
+    if [ -n "$BOOT_DIR" ] && [ -f "$BOOT_DIR/overlays/argon-oneup-battery.dtbo" ] && [ ! -e /sys/bus/i2c/devices/1-0064 ]; then
+        if command -v dtoverlay >/dev/null 2>&1; then
+            dtoverlay -d "$BOOT_DIR/overlays" argon-oneup-battery 2>/dev/null || dtoverlay argon-oneup-battery 2>/dev/null || true
+        fi
+    fi
 
-# Trigger I2C device probe if not already probed by Device Tree
-if [ ! -e /sys/bus/i2c/devices/1-0064 ] && [ -d /sys/bus/i2c/devices/i2c-1 ]; then
-    echo "oneup-battery 0x64" > /sys/bus/i2c/devices/i2c-1/new_device 2>/dev/null || true
-    echo "[argon-oneup-battery] Triggered I2C probe for CW2217 at address 0x64"
+    modprobe oneUpPower 2>/dev/null || true
+
+    if [ ! -e /sys/bus/i2c/devices/1-0064 ] && [ -d /sys/bus/i2c/devices/i2c-1 ]; then
+        echo "oneup-battery 0x64" > /sys/bus/i2c/devices/i2c-1/new_device 2>/dev/null || true
+        echo "[argon-oneup-battery] Triggered I2C probe for CW2217 at address 0x64"
+    fi
+
+    systemctl try-restart upower.service 2>/dev/null || true
 fi
-
-systemctl try-restart upower.service 2>/dev/null || true
 
 echo "[argon-oneup-battery] Battery driver and power supply integration installed successfully."
 exit 0

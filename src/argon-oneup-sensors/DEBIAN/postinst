@@ -7,13 +7,15 @@ if [ -f /etc/systemd/user/plasma-ksystemstats.service.d/cpuinfo_fix.conf ]; then
     rmdir --ignore-fail-on-non-empty /etc/systemd/user/plasma-ksystemstats.service.d 2>/dev/null || true
 fi
 
-# Set CAP_SYS_ADMIN file capability for namespace helper
+# Set CAP_SYS_ADMIN file capability for namespace helper (with SUID fallback if chroot drops CAP_SETFCAP)
 if [ -f /usr/bin/ksystemstats-ns-helper ]; then
-    if ! setcap cap_sys_admin+ep /usr/bin/ksystemstats-ns-helper; then
-        echo "ERROR: Failed to set cap_sys_admin on /usr/bin/ksystemstats-ns-helper" >&2
-        exit 1
+    if setcap cap_sys_admin+ep /usr/bin/ksystemstats-ns-helper 2>/dev/null; then
+        chmod 0755 /usr/bin/ksystemstats-ns-helper
+        echo "[argon-oneup-sensors] Configured cap_sys_admin on /usr/bin/ksystemstats-ns-helper"
+    else
+        chmod 4755 /usr/bin/ksystemstats-ns-helper
+        echo "[argon-oneup-sensors] Configured SUID fallback on /usr/bin/ksystemstats-ns-helper (CAP_SETFCAP dropped in chroot)"
     fi
-    echo "[argon-oneup-sensors] Configured cap_sys_admin on /usr/bin/ksystemstats-ns-helper"
 fi
 
 # Apply cpu_thermal patch to ksystemstats_plugin_cpu.so if present

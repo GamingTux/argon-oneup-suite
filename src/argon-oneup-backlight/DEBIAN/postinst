@@ -1,11 +1,13 @@
 #!/bin/bash
 set -e
 
-systemctl daemon-reload 2>/dev/null || true
-udevadm control --reload-rules 2>/dev/null || true
 systemctl enable argon-backlight.service 2>/dev/null || true
-systemctl restart argon-backlight.service 2>/dev/null || /usr/sbin/argon-backlight-init start 2>/dev/null || true
-udevadm trigger --subsystem-match=backlight 2>/dev/null || true
+if [ "$(stat -c %d:%i / 2>/dev/null)" = "$(stat -c %d:%i /proc/1/root/. 2>/dev/null)" ]; then
+    systemctl daemon-reload 2>/dev/null || true
+    udevadm control --reload-rules 2>/dev/null || true
+    systemctl restart argon-backlight.service 2>/dev/null || /usr/sbin/argon-backlight-init start 2>/dev/null || true
+    udevadm trigger --subsystem-match=backlight 2>/dev/null || true
+fi
 
 echo "[argon-oneup-backlight] Backlight driver installed and initialized successfully!"
 exit 0

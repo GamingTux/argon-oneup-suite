@@ -14,7 +14,15 @@ if [ -f "$CONF_FILE" ]; then
     . "$CONF_FILE"
 fi
 
+is_chroot() {
+    [ "$(stat -c %d:%i / 2>/dev/null)" != "$(stat -c %d:%i /proc/1/root/. 2>/dev/null)" ]
+}
+
 apply_runtime_perf() {
+    if is_chroot; then
+        return 0
+    fi
+
     # 1. Pre-tune ondemand governor parameters (in case ondemand is selected)
     for od_dir in /sys/devices/system/cpu/cpufreq/ondemand /sys/devices/system/cpu/cpufreq/policy*/ondemand; do
         [ -d "$od_dir" ] || continue
@@ -78,8 +86,13 @@ apply_runtime_perf() {
     done
 
     # 5. Put unpopulated CM5 Gigabit Ethernet PHY into MDIO BMCR_PDOWN suspend
+    #    Only bring eth0 down if it is the internal RP1 macb controller and has no active link/IP
     if [ "${DISABLE_UNUSED_ETHERNET:-1}" = "1" ] && [ -d /sys/class/net/eth0 ]; then
-        /sbin/ip link set dev eth0 down 2>/dev/null || true
+        ETH_DRV=$(basename "$(readlink -f /sys/class/net/eth0/device/driver 2>/dev/null)" 2>/dev/null || true)
+        ETH_CARRIER=$(cat /sys/class/net/eth0/carrier 2>/dev/null || echo 0)
+        if [ "$ETH_DRV" = "macb" ] && [ "$ETH_CARRIER" != "1" ] && ! /sbin/ip -4 addr show dev eth0 2>/dev/null | grep -q "inet "; then
+            /sbin/ip link set dev eth0 down 2>/dev/null || true
+        fi
     fi
 }
 
@@ -189,22 +202,26 @@ fi
 if [ -f /etc/default/irqbalance ] && [ -x /usr/bin/argon-oneup-irq-policy ]; then
     if ! grep -q "argon-oneup-irq-policy" /etc/default/irqbalance; then
         echo 'IRQBALANCE_ARGS="--policyscript=/usr/bin/argon-oneup-irq-policy"' >> /etc/default/irqbalance
-        systemctl try-restart irqbalance.service 2>/dev/null || true
+        if ! is_chroot; then
+            systemctl try-restart irqbalance.service 2>/dev/null || true
+        fi
     fi
 fi
 
-# Apply runtime CPU/IRQ/RPS/eth0 optimizations immediately
+# Apply runtime CPU/IRQ/RPS/eth0 optimizations immediately (skipped inside chroot)
 apply_runtime_perf
 
-# Configure PSU_MAX_CURRENT=5000, POWER_OFF_ON_HALT=1, SDRAM_BANKLOW=1 in EEPROM if supported
-if [ -x /usr/sbin/argononeup-eepromconfig.py ] && command -v rpi-eeprom-config >/dev/null 2>&1; then
+# Configure PSU_MAX_CURRENT=5000, POWER_OFF_ON_HALT=1, SDRAM_BANKLOW=1 in EEPROM if supported on live hardware
+if ! is_chroot && [ -x /usr/sbin/argononeup-eepromconfig.py ] && command -v rpi-eeprom-config >/dev/null 2>&1; then
     /usr/sbin/argononeup-eepromconfig.py >/dev/null 2>&1 || true
 fi
 
 # Bind XF86MonBrightnessUp/Down in labwc on Standard Raspberry Pi OS if present
 if [ -f /etc/xdg/labwc/rc.xml ] && ! grep -q "XF86MonBrightnessUp" /etc/xdg/labwc/rc.xml; then
     sed -i '/<keybind key="XF86AudioMute">/i \    <keybind key="XF86MonBrightnessUp">\n      <action name="Execute" command="argon-brightness-step +10" />\n    </keybind>\n    <keybind key="XF86MonBrightnessDown">\n      <action name="Execute" command="argon-brightness-step -10" />\n    </keybind>' /etc/xdg/labwc/rc.xml 2>/dev/null || true
-    pkill -HUP labwc 2>/dev/null || true
+    if ! is_chroot; then
+        pkill -HUP labwc 2>/dev/null || true
+    fi
 fi
 
 # Enable Subpixel RGB Font Rendering & LCD Filter for crisp text on the 14" BOE IPS panel
@@ -218,9 +235,11 @@ if [ -d /etc/fonts/conf.d ] && [ -d /usr/share/fontconfig/conf.avail ]; then
     fi
 fi
 
-# Apply sysctl and BBR runtime optimizations immediately
-modprobe tcp_bbr 2>/dev/null || true
-sysctl --system >/dev/null 2>&1 || true
+# Apply sysctl and BBR runtime optimizations immediately (skipped inside chroot)
+if ! is_chroot; then
+    modprobe tcp_bbr 2>/dev/null || true
+    sysctl --system >/dev/null 2>&1 || true
+fi
 
 # Disable disk swapfile wear if systemd-zram-generator is present
 if [ -d /lib/systemd/system-generators ] && [ -x /lib/systemd/system-generators/zram-generator ]; then
@@ -239,7 +258,7 @@ if [ -d /etc/systemd/system ]; then
     ln -sf /dev/null /etc/systemd/system/systemd-networkd-wait-online.service 2>/dev/null || true
 fi
 
-if command -v udevadm >/dev/null 2>&1; then
+if ! is_chroot && command -v udevadm >/dev/null 2>&1; then
     udevadm control --reload-rules 2>/dev/null || true
     udevadm trigger --subsystem-match=block 2>/dev/null || true
 fi
