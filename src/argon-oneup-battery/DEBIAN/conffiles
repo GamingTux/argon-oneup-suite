@@ -1,3 +1,2 @@
 /etc/modprobe.d/oneUpPower.conf
 /etc/modules-load.d/argon-battery.conf
-/etc/sensors.d/argon-oneup-sensors.conf

@@ -68,8 +68,11 @@ if [ -n "$BOOT_DIR" ] && [ -f "$BOOT_DIR/overlays/argon-oneup-battery.dtbo" ] &&
     command -v dtoverlay >/dev/null 2>&1 && dtoverlay "$BOOT_DIR/overlays/argon-oneup-battery.dtbo" 2>/dev/null || true
 fi
 
-# Load i2c-dev if available
-modprobe i2c-dev 2>/dev/null || true
+# Clean up legacy /etc/modules entry and duplicate sensors config from older versions
+if [ -f /etc/modules ]; then
+    sed -i '/^oneUpPower$/d' /etc/modules 2>/dev/null || true
+fi
+rm -f /etc/sensors.d/argon-oneup-sensors.conf 2>/dev/null || true
 
 # Try loading the module immediately
 modprobe oneUpPower 2>/dev/null || true

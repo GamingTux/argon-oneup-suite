@@ -2,11 +2,13 @@
 /*
  * Battery driver for the Argon ONE UP laptop (CW2217 fuel gauge, I2C).
  *
- * Author:  Jeff Curless
+ * Original author: Jeff Curless
+ * Enhanced & hardened for Argon ONE UP Suite.
  *
  * Follows the Linux I2C driver model: per-device state allocated in probe(),
- * devm_* resource management, delayed_work instead of a raw kthread, and
- * module_i2c_driver() instead of manual module_init/exit.
+ * devm_* resource management, delayed_work instead of a raw kthread, atomic
+ * 16-bit SMBus word reads to prevent register tearing, and EMA current
+ * smoothing for stable runtime estimation.
  */
 
 #define pr_fmt(fmt) "oneup-battery: " fmt
@@ -27,13 +29,14 @@
 #include <linux/workqueue.h>
 
 #define VERSION_MAJOR   1
-#define VERSION_MINOR   0
-#define VERSION_EDIT    10
+#define VERSION_MINOR   1
+#define VERSION_EDIT    0
 
 #define CELLS_IN_SERIES             3
 #define TOTAL_LIFE_SECONDS          (6 * 60 * 60)
-#define TOTAL_CHARGE                (4800 * 1000)
-#define TOTAL_CHARGE_FULL_SECONDS   (((2*60)+30) * 60)
+#define TOTAL_CHARGE                (4800 * 1000)       /* 4,800,000 µAh (4800 mAh) */
+#define TOTAL_ENERGY_UWH            (53280 * 1000)      /* 53,280,000 µWh (53.28 Wh @ 11.1V nominal) */
+#define TOTAL_CHARGE_FULL_SECONDS   (((2 * 60) + 30) * 60)
 
 #define CW2217_RSENSE_MOHM          10
 
@@ -42,7 +45,7 @@
  * Even in deep standby (Fake-Sleep), the laptop draws at least -260 mA (-260,000 µA)
  * when running on battery. When AC is connected and the battery is 100% full, the
  * charger terminates charge current (I ≈ 0 mA), where CW2217 ADC zero-offset noise
- * can fluctuate slightly negative (e.g. -1 mA to -10 mA, setting bit 7 of REG_CURRENT_HIGH).
+ * can fluctuate slightly negative (e.g. -1 mA to -10 mA).
  * Any current above -50 mA (-50,000 µA) therefore means external AC power is supplying
  * the system.
  */
@@ -68,24 +71,19 @@
 #define REG_STB_CUR_HIGH            0xA8
 #define REG_STB_CUR_LOW             0xA9
 
-/* Backward compatibility aliases */
-#define CURRENT_HIGH_REG            REG_CURRENT_HIGH
-#define SOC_HIGH_REG                REG_SOC_HIGH
-
-#define CTRL_RESTART        0x30
-#define CTRL_SLEEP          0xF0
-#define CTRL_ACTIVE         0x00
+#define CTRL_RESTART                0x30
+#define CTRL_SLEEP                  0xF0
+#define CTRL_ACTIVE                 0x00
 
 /* Bit fields */
-#define CURRENT_HIGH_DISCHARGE_BIT  0x80  /* set = discharging, clear = charging */
 #define SOCALERT_PROFILE_FLAG       0x80  /* set = OCV profile loaded */
 #define ICSTATE_ACTIVE_MASK         0x0C  /* non-zero = IC ready */
 
 /* SOC capacity-level thresholds (percent) */
-#define SOC_THRESH_FULL     95
-#define SOC_THRESH_HIGH     75
-#define SOC_THRESH_NORMAL   25
-#define SOC_THRESH_LOW      10
+#define SOC_THRESH_FULL             95
+#define SOC_THRESH_HIGH             75
+#define SOC_THRESH_NORMAL           25
+#define SOC_THRESH_LOW              10
 
 /* CW2217 timing and retry constants */
 #define CW2217_RESTART_DELAY_MS     100
@@ -103,38 +101,38 @@ struct oneup_battery {
 	struct power_supply  *ac_psy;
 
 	/*
-	 * Protects soc, ac_online, status, capacity_level, voltage_uv,
-	 * current_ua, and temp_dc against concurrent reads from sysfs getters
-	 * while the work handler writes them.
+	 * Protects shared battery telemetry fields against concurrent reads
+	 * from sysfs getters while the work handler writes them.
 	 */
 	spinlock_t lock;
 
-	int soc;            /* state of charge, 0-100 % */
-	int soc_fractional; /* 16-bit fractional SOC: (soc_h << 8) | soc_l */
-	int cycle_count;    /* full charge cycles */
-	int soh;            /* state of health, 0-100 % */
+	int soc;                /* state of charge, 0-100 % */
+	int soc_fractional;     /* 16-bit fractional SOC: (soc_h << 8) | soc_l */
+	int cycle_count;        /* full charge cycles */
+	int soh;                /* state of health, 0-100 % */
 	int standby_current_ua; /* standby / quiescent current in µA */
-	int ac_online;      /* 1 = charger connected */
-	int ac_candidate;   /* most recent raw read awaiting confirmation */
-	int ac_debounce;    /* consecutive polls confirming ac_candidate */
-	int status;         /* POWER_SUPPLY_STATUS_* */
-	int capacity_level; /* POWER_SUPPLY_CAPACITY_LEVEL_* */
-	int voltage_uv;     /* cell voltage in µV */
-	int current_ua;     /* current in µA (+ charging, - discharging) */
-	int temp_dc;        /* temperature in tenths of °C */
+	int ac_online;          /* 1 = charger connected */
+	int ac_candidate;       /* most recent raw read awaiting confirmation */
+	int ac_debounce;        /* consecutive polls confirming ac_candidate */
+	int status;             /* POWER_SUPPLY_STATUS_* */
+	int capacity_level;     /* POWER_SUPPLY_CAPACITY_LEVEL_* */
+	int voltage_uv;         /* single-cell voltage in µV */
+	int current_ua;         /* instantaneous current in µA (+ charging, - discharging) */
+	int current_avg_ua;     /* EMA-smoothed current in µA for stable runtime estimation */
+	int temp_dc;            /* temperature in tenths of °C */
 	unsigned int poll_tick; /* tick counter to throttle slow-changing register reads */
-	bool shutdown_triggered; /* true once orderly_poweroff has been called */
+	bool word_read_ok;      /* true if adapter supports atomic SMBus word reads */
+	bool avg_initialized;   /* true once current_avg_ua has been seeded */
+	bool shutdown_triggered;/* true once orderly_poweroff has been called */
 };
 
-/* Module parameters - read at runtime via READ_ONCE() from the work handler. */
+/* Module parameters - accessed via READ_ONCE() / WRITE_ONCE(). */
 static int soc_shutdown = 5;
 static int ac_debounce_polls = 3;
 
 /*
  * Battery model profile for the CW2217 (80 bytes starting at REG_PROFILE).
- * OCV curve extracted from archive/kickstarter/argononeupd.py. Without a
- * matching profile the IC's SOC algorithm produces inaccurate readings
- * especially near full and empty.
+ * OCV curve for the Argon ONE UP 3S1P 4800 mAh Li-Ion pack.
  */
 static const u8 battery_profile[] = {
 	0x32, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -164,14 +162,19 @@ static enum power_supply_property power_battery_props[] = {
 	POWER_SUPPLY_PROP_VOLTAGE_MIN_DESIGN,
 	POWER_SUPPLY_PROP_VOLTAGE_MAX_DESIGN,
 	POWER_SUPPLY_PROP_CURRENT_NOW,
+	POWER_SUPPLY_PROP_CURRENT_AVG,
 	POWER_SUPPLY_PROP_POWER_NOW,
 	POWER_SUPPLY_PROP_TEMP,
 	POWER_SUPPLY_PROP_CHARGE_EMPTY,
 	POWER_SUPPLY_PROP_CHARGE_FULL_DESIGN,
 	POWER_SUPPLY_PROP_CHARGE_FULL,
 	POWER_SUPPLY_PROP_CHARGE_NOW,
+	POWER_SUPPLY_PROP_ENERGY_FULL_DESIGN,
+	POWER_SUPPLY_PROP_ENERGY_FULL,
+	POWER_SUPPLY_PROP_ENERGY_NOW,
 	POWER_SUPPLY_PROP_CAPACITY,
 	POWER_SUPPLY_PROP_CAPACITY_LEVEL,
+	POWER_SUPPLY_PROP_TIME_TO_EMPTY_NOW,
 	POWER_SUPPLY_PROP_TIME_TO_EMPTY_AVG,
 	POWER_SUPPLY_PROP_TIME_TO_FULL_NOW,
 	POWER_SUPPLY_PROP_MODEL_NAME,
@@ -205,71 +208,79 @@ static const struct power_supply_desc oneup_ac_desc = {
 };
 
 /*
+ * Read a big-endian 16-bit register pair (reg_hi, reg_hi + 1) atomically
+ * when the I2C adapter supports SMBus word reads, preventing high/low byte
+ * tearing across ADC updates.
+ */
+static int read_word_be16(struct oneup_battery *bat, u8 reg_hi)
+{
+	int hi, lo;
+
+	if (bat->word_read_ok)
+		return i2c_smbus_read_word_swapped(bat->client, reg_hi);
+
+	hi = i2c_smbus_read_byte_data(bat->client, reg_hi);
+	if (hi < 0)
+		return hi;
+
+	lo = i2c_smbus_read_byte_data(bat->client, reg_hi + 1);
+	if (lo < 0)
+		return lo;
+
+	return ((hi & 0xFF) << 8) | (lo & 0xFF);
+}
+
+/*
  * Read cell voltage from registers 0x02 (high) and 0x03 (low).
  * Bits 13:0, scaled by 312.5 µV (625 / 2).
- * Stores voltage in microvolts (µV) into *volt. Returns 0 on success or -errno.
  */
-static int read_voltage_uv(struct i2c_client *client, int *volt)
+static int read_voltage_uv(struct oneup_battery *bat, int *volt)
 {
-	int v_hi, v_lo;
-	u16 raw_v;
+	int raw = read_word_be16(bat, REG_VCELL_HIGH);
 
-	v_hi = i2c_smbus_read_byte_data(client, REG_VCELL_HIGH);
-	if (v_hi < 0)
-		return v_hi;
+	if (raw < 0)
+		return raw;
 
-	v_lo = i2c_smbus_read_byte_data(client, REG_VCELL_LOW);
-	if (v_lo < 0)
-		return v_lo;
-
-	raw_v = ((v_hi & 0x3F) << 8) | (v_lo & 0xFF);
-	*volt = (int)((u64)raw_v * 625 / 2);
+	*volt = (int)((u64)(raw & 0x3FFF) * 625 / 2);
 	return 0;
 }
 
 /*
- * Read battery current from registers 0x0E (high) and 0x0F (low).
- * Signed 16-bit word, converted to µA using 10 mΩ sense resistor.
- * Stores current in microamperes (µA, + charging, - discharging) into *curr.
- * Returns 0 on success or -errno.
+ * Convert a signed 16-bit CW2217 current register value to microamperes (µA)
+ * using the 10 mΩ sense resistor.
  */
-static int read_current_ua(struct i2c_client *client, int *curr, int *raw_hi_out)
+static int raw_to_current_ua(s16 raw_curr)
 {
-	int c_hi, c_lo;
-	s16 raw_curr;
-	s64 num, denom;
+	s64 num = (s64)raw_curr * 52400000LL;
+	s64 denom = (s64)32768 * CW2217_RSENSE_MOHM;
 
-	c_hi = i2c_smbus_read_byte_data(client, REG_CURRENT_HIGH);
-	if (c_hi < 0)
-		return c_hi;
-
-	if (raw_hi_out)
-		*raw_hi_out = c_hi;
-
-	c_lo = i2c_smbus_read_byte_data(client, REG_CURRENT_LOW);
-	if (c_lo < 0)
-		return c_lo;
-
-	raw_curr = (s16)(((u16)(c_hi & 0xFF) << 8) | ((u16)(c_lo & 0xFF)));
-	num = (s64)raw_curr * 52400000LL;
-	denom = (s64)32768 * CW2217_RSENSE_MOHM;
 	num += (num >= 0) ? (denom / 2) : -(denom / 2);
+	return (int)div_s64(num, denom);
+}
 
-	*curr = (int)div_s64(num, denom);
+/*
+ * Read battery current from registers 0x0E (high) and 0x0F (low).
+ * Stores current in microamperes (µA, + charging, - discharging) into *curr.
+ */
+static int read_current_ua(struct oneup_battery *bat, int *curr)
+{
+	int raw = read_word_be16(bat, REG_CURRENT_HIGH);
+
+	if (raw < 0)
+		return raw;
+
+	*curr = raw_to_current_ua((s16)raw);
 	return 0;
 }
 
 /*
  * Read battery temperature from register 0x06.
  * Linear formula: -40.0 °C + 0.5 °C * raw_byte -> tenths of °C.
- * Stores temperature in tenths of a degree Celsius (0.1 °C) into *temp.
- * Returns 0 on success or -errno.
  */
 static int read_temperature_dc(struct i2c_client *client, int *temp)
 {
-	int temp_raw;
+	int temp_raw = i2c_smbus_read_byte_data(client, REG_TEMP);
 
-	temp_raw = i2c_smbus_read_byte_data(client, REG_TEMP);
 	if (temp_raw < 0)
 		return temp_raw;
 
@@ -281,21 +292,14 @@ static int read_temperature_dc(struct i2c_client *client, int *temp)
  * Read cycle count from registers 0xA4 (high) and 0xA5 (low).
  * Unsigned 16-bit word, LSB is 1/16th of a cycle.
  */
-static int read_cycle_count(struct i2c_client *client, int *cycles)
+static int read_cycle_count(struct oneup_battery *bat, int *cycles)
 {
-	int c_hi, c_lo;
-	u16 raw_cycles;
+	int raw = read_word_be16(bat, REG_CYCLE_HIGH);
 
-	c_hi = i2c_smbus_read_byte_data(client, REG_CYCLE_HIGH);
-	if (c_hi < 0)
-		return c_hi;
+	if (raw < 0)
+		return raw;
 
-	c_lo = i2c_smbus_read_byte_data(client, REG_CYCLE_LOW);
-	if (c_lo < 0)
-		return c_lo;
-
-	raw_cycles = ((u16)(c_hi & 0xFF) << 8) | ((u16)(c_lo & 0xFF));
-	*cycles = (int)(raw_cycles / 16);
+	*cycles = raw / 16;
 	return 0;
 }
 
@@ -305,15 +309,12 @@ static int read_cycle_count(struct i2c_client *client, int *cycles)
  */
 static int read_soh(struct i2c_client *client, int *soh)
 {
-	int val;
+	int val = i2c_smbus_read_byte_data(client, REG_SOH);
 
-	val = i2c_smbus_read_byte_data(client, REG_SOH);
 	if (val < 0)
 		return val;
 
-	if (val > 100)
-		val = 100;
-	else if (val <= 0)
+	if (val == 0 || val > 100)
 		val = 100;
 
 	*soh = val;
@@ -322,28 +323,15 @@ static int read_soh(struct i2c_client *client, int *soh)
 
 /*
  * Read standby current from registers 0xA8 (high) and 0xA9 (low).
- * Signed 16-bit word, converted to µA using 10 mΩ sense resistor.
  */
-static int read_standby_current_ua(struct i2c_client *client, int *curr)
+static int read_standby_current_ua(struct oneup_battery *bat, int *curr)
 {
-	int c_hi, c_lo;
-	s16 raw_curr;
-	s64 num, denom;
+	int raw = read_word_be16(bat, REG_STB_CUR_HIGH);
 
-	c_hi = i2c_smbus_read_byte_data(client, REG_STB_CUR_HIGH);
-	if (c_hi < 0)
-		return c_hi;
+	if (raw < 0)
+		return raw;
 
-	c_lo = i2c_smbus_read_byte_data(client, REG_STB_CUR_LOW);
-	if (c_lo < 0)
-		return c_lo;
-
-	raw_curr = (s16)(((u16)(c_hi & 0xFF) << 8) | ((u16)(c_lo & 0xFF)));
-	num = (s64)raw_curr * 52400000LL;
-	denom = (s64)32768 * CW2217_RSENSE_MOHM;
-	num += (num >= 0) ? (denom / 2) : -(denom / 2);
-
-	*curr = (int)div_s64(num, denom);
+	*curr = raw_to_current_ua((s16)raw);
 	return 0;
 }
 
@@ -369,11 +357,27 @@ static struct attribute *oneup_battery_attrs[] = {
 ATTRIBUTE_GROUPS(oneup_battery);
 
 /*
+ * Update EMA-smoothed current (alpha = 1/8). Resets immediately on polarity
+ * change (AC plug/unplug transition) so runtime estimates react without lag.
+ */
+static void update_current_avg(struct oneup_battery *bat, int curr_ua)
+{
+	if (!bat->avg_initialized ||
+	    (curr_ua < AC_DISCHARGE_THRESHOLD_UA && bat->current_avg_ua >= 0) ||
+	    (curr_ua > 50000 && bat->current_avg_ua <= 0)) {
+		bat->current_avg_ua  = curr_ua;
+		bat->avg_initialized = true;
+	} else {
+		bat->current_avg_ua = (bat->current_avg_ua * 7 + curr_ua) / 8;
+	}
+}
+
+/*
  * Update bat->soc, bat->status, and bat->capacity_level from the given SOC and
- * the current AC state.  All fields are evaluated and written under one lock
+ * the current AC state. All fields are evaluated and written under one lock
  * hold so sysfs getters always see a consistent snapshot.
  */
-static void set_power_states(struct oneup_battery *bat, int soc)
+static void set_power_states(struct oneup_battery *bat, int soc, int frac_soc)
 {
 	int new_level, new_status;
 
@@ -404,6 +408,7 @@ static void set_power_states(struct oneup_battery *bat, int soc)
 	}
 
 	bat->soc            = soc;
+	bat->soc_fractional = frac_soc;
 	bat->capacity_level = new_level;
 	bat->status         = new_status;
 	spin_unlock(&bat->lock);
@@ -411,31 +416,23 @@ static void set_power_states(struct oneup_battery *bat, int soc)
 
 /*
  * Update bat->ac_online from the measured current in µA.
- * When the battery is 100% full and on AC power, the charger IC cuts off
- * charge current (I ≈ 0 mA), where CW2217 ADC zero-offset can read slightly
- * negative (-1 to -10 mA, setting bit 7 of REG_CURRENT_HIGH). Using a -50 mA
- * threshold prevents false 'Discharging' reports when full and plugged in.
  */
 static void update_ac_power(struct oneup_battery *bat, int current_ua)
 {
-	int plugged_in;
+	int plugged_in = (current_ua >= AC_DISCHARGE_THRESHOLD_UA) ? 1 : 0;
 	int threshold;
 	int current_ac_online;
-
-	plugged_in = (current_ua >= AC_DISCHARGE_THRESHOLD_UA) ? 1 : 0;
 
 	spin_lock(&bat->lock);
 	current_ac_online = bat->ac_online;
 	spin_unlock(&bat->lock);
 
-	/* Raw read matches current state - no transition in progress. */
 	if (plugged_in == current_ac_online) {
 		bat->ac_candidate = plugged_in;
 		bat->ac_debounce  = 0;
 		return;
 	}
 
-	/* Accumulate consecutive confirmations of the candidate value. */
 	if (plugged_in == bat->ac_candidate) {
 		bat->ac_debounce++;
 	} else {
@@ -443,62 +440,57 @@ static void update_ac_power(struct oneup_battery *bat, int current_ua)
 		bat->ac_debounce  = 1;
 	}
 
-	/* Clamp the tunable to a sane range at point of use. */
-	threshold = clamp_val(ac_debounce_polls, 1, 10);
+	threshold = clamp_val(READ_ONCE(ac_debounce_polls), 1, 10);
 
 	if (bat->ac_debounce >= threshold) {
 		spin_lock(&bat->lock);
 		bat->ac_online = plugged_in;
 		spin_unlock(&bat->lock);
 		bat->ac_debounce = 0;
-		if (plugged_in)
-			dev_info(&bat->client->dev, "AC Power is connected.\n");
-		else
-			dev_info(&bat->client->dev, "AC Power is disconnected.\n");
+		dev_info(&bat->client->dev, "AC Power is %s.\n",
+			 plugged_in ? "connected" : "disconnected");
 	}
 }
 
 /*
- * Read the state-of-charge register.  Returns the new SOC, or the previous
- * value if the read fails.  bat->soc itself is updated by set_power_states()
- * so it stays consistent with status and capacity_level.
+ * Read the 16-bit state-of-charge register pair (0x04/0x05).
  */
 static int check_battery_state(struct oneup_battery *bat, int *frac_soc)
 {
-	int soc_h, soc_l;
+	int raw = read_word_be16(bat, REG_SOC_HIGH);
+	int soc_h, soc_l, prev_soc;
 
-	soc_h = i2c_smbus_read_byte_data(bat->client, SOC_HIGH_REG);
-	if (soc_h < 0) {
-		dev_err(&bat->client->dev, "Failed to read SOC register: %d\n", soc_h);
-		return bat->soc;
+	spin_lock(&bat->lock);
+	prev_soc = bat->soc;
+	spin_unlock(&bat->lock);
+
+	if (raw < 0) {
+		dev_err(&bat->client->dev, "Failed to read SOC register: %d\n", raw);
+		if (frac_soc)
+			*frac_soc = prev_soc << 8;
+		return prev_soc;
 	}
-	soc_l = i2c_smbus_read_byte_data(bat->client, REG_SOC_LOW);
-	if (soc_l < 0)
-		soc_l = 0;
 
-	if (soc_h > 100)
+	soc_h = (raw >> 8) & 0xFF;
+	soc_l = raw & 0xFF;
+
+	if (soc_h > 100) {
 		soc_h = 100;
+		soc_l = 0;
+	}
 
 	if (frac_soc)
-		*frac_soc = (soc_h << 8) | (u8)soc_l;
+		*frac_soc = (soc_h << 8) | soc_l;
 
-	if (bat->soc != soc_h)
-		dev_info(&bat->client->dev, "Battery State of charge is %d%%\n", soc_h);
+	if (prev_soc != soc_h)
+		dev_dbg(&bat->client->dev, "Battery State of charge is %d%%\n", soc_h);
 
 	return soc_h;
-}
-
-/* Trigger a graceful system shutdown when battery is critically low. */
-static void shutdown_helper(void)
-{
-	orderly_poweroff(false);
 }
 
 /*
  * Cycle the CW2217 control register to bring it out of sleep or error state,
  * then poll REG_ICSTATE until the IC reports it is ready (bits [3:2] non-zero).
- * Returns 0 if the IC is active and ready, or -ETIMEDOUT if it did not become
- * ready after retries.
  */
 static int restart_battery_ic(struct i2c_client *client)
 {
@@ -538,14 +530,7 @@ static int restart_battery_ic(struct i2c_client *client)
 
 /*
  * Verify the 80-byte OCV curve stored in the CW2217 against the known-good
- * profile for this battery pack.  If the IC is inactive, the profile flag is
- * unset, or any byte mismatches, the IC is put to sleep, the full profile is
- * written, and the IC is restarted.
- *
- * Ported from battery_checkupdateprofile() in archive/kickstarter/argononeupd.py.
- *
- * Returns 0 if the profile is valid or was successfully updated, or a negative
- * errno on I2C error or if the IC failed to restart after programming.
+ * profile for this battery pack.
  */
 static int init_battery_profile(struct i2c_client *client)
 {
@@ -558,17 +543,14 @@ static int init_battery_profile(struct i2c_client *client)
 
 	dev_info(&client->dev, "Checking battery profile...\n");
 
-	/* IC is active when REG_CONTROL reads back 0 */
 	control = i2c_smbus_read_byte_data(client, REG_CONTROL);
 	if (control < 0) {
 		dev_err(&client->dev, "Failed to read control register: %d\n", control);
 		return control;
 	}
 	if (control == 0) {
-		/* IC is up; check if the profile-loaded flag is set */
 		socalert = i2c_smbus_read_byte_data(client, REG_SOCALERT);
 		if (socalert >= 0 && (socalert & SOCALERT_PROFILE_FLAG) != 0) {
-			/* Flag set; verify every profile byte */
 			profile_ok = true;
 			for (i = 0; i < ARRAY_SIZE(battery_profile); i++) {
 				val = i2c_smbus_read_byte_data(client, REG_PROFILE + i);
@@ -589,7 +571,6 @@ static int init_battery_profile(struct i2c_client *client)
 
 	dev_info(&client->dev, "Programming battery profile...\n");
 
-	/* Restart then sleep the IC before writing */
 	ret = i2c_smbus_write_byte_data(client, REG_CONTROL, CTRL_RESTART);
 	if (ret < 0) {
 		dev_err(&client->dev, "Failed to restart IC before profile write: %d\n", ret);
@@ -604,7 +585,6 @@ static int init_battery_profile(struct i2c_client *client)
 	}
 	msleep(CW2217_RESTART_DELAY_MS);
 
-	/* Write the 80-byte battery model profile */
 	for (i = 0; i < ARRAY_SIZE(battery_profile); i++) {
 		ret = i2c_smbus_write_byte_data(client, REG_PROFILE + i, battery_profile[i]);
 		if (ret < 0) {
@@ -613,7 +593,6 @@ static int init_battery_profile(struct i2c_client *client)
 		}
 	}
 
-	/* Mark profile as loaded - RMW to preserve lower SOC alert threshold bits */
 	socalert = i2c_smbus_read_byte_data(client, REG_SOCALERT);
 	if (socalert < 0)
 		socalert = 0;
@@ -625,7 +604,6 @@ static int init_battery_profile(struct i2c_client *client)
 	}
 	msleep(CW2217_RESTART_DELAY_MS);
 
-	/* Disable IC interrupts */
 	ret = i2c_smbus_write_byte_data(client, REG_GPIOCONFIG, 0x00);
 	if (ret < 0) {
 		dev_err(&client->dev, "Failed to configure GPIO: %d\n", ret);
@@ -633,7 +611,6 @@ static int init_battery_profile(struct i2c_client *client)
 	}
 	msleep(CW2217_RESTART_DELAY_MS);
 
-	/* Restart and wait for the IC to become ready */
 	ret = restart_battery_ic(client);
 	if (ret != 0) {
 		dev_err(&client->dev, "Battery IC failed to restart after profile update.\n");
@@ -646,46 +623,50 @@ static int init_battery_profile(struct i2c_client *client)
 
 /*
  * Periodic work handler: polls the hardware, updates per-device state, and
- * re-queues itself every second. devm_delayed_work_autocancel() ensures this
- * is cancelled on device removal.
+ * re-queues itself every second.
  */
 static void oneup_battery_work(struct work_struct *work)
 {
 	struct oneup_battery *bat =
 		container_of(to_delayed_work(work), struct oneup_battery, work);
-	int prev_soc            = bat->soc;
-	int prev_ac_online      = bat->ac_online;
-	int prev_status         = bat->status;
-	int prev_capacity_level = bat->capacity_level;
-	int v = 0, c = 0, c_hi = -1, t = 0;
+	int prev_soc, prev_ac_online, prev_status, prev_capacity_level;
+	int cur_soc, cur_ac_online, cur_status, cur_capacity_level;
+	int v = 0, c = 0, t = 0;
 	int frac_soc = 0, cycles = 0, soh = 100, stb_c = 0;
 	int new_soc;
 	bool v_ok, c_ok, t_ok, cycles_ok = false, soh_ok = false, stb_c_ok = false;
 
-	c_ok = (read_current_ua(bat->client, &c, &c_hi) == 0);
+	spin_lock(&bat->lock);
+	prev_soc            = bat->soc;
+	prev_ac_online      = bat->ac_online;
+	prev_status         = bat->status;
+	prev_capacity_level = bat->capacity_level;
+	spin_unlock(&bat->lock);
+
+	c_ok = (read_current_ua(bat, &c) == 0);
 	if (c_ok) {
 		spin_lock(&bat->lock);
 		bat->current_ua = c;
+		update_current_avg(bat, c);
 		spin_unlock(&bat->lock);
 		update_ac_power(bat, c);
 	}
 
 	new_soc = check_battery_state(bat, &frac_soc);
-	set_power_states(bat, new_soc);
+	set_power_states(bat, new_soc, frac_soc);
 
-	v_ok = (read_voltage_uv(bat->client, &v) == 0);
+	v_ok = (read_voltage_uv(bat, &v) == 0);
 	t_ok = (read_temperature_dc(bat->client, &t) == 0);
 
 	/* Poll slow-changing health/cycle registers every 60s or on SOC change */
 	bat->poll_tick++;
 	if ((bat->poll_tick % 60) == 0 || new_soc != prev_soc) {
-		cycles_ok = (read_cycle_count(bat->client, &cycles) == 0);
+		cycles_ok = (read_cycle_count(bat, &cycles) == 0);
 		soh_ok    = (read_soh(bat->client, &soh) == 0);
-		stb_c_ok  = (read_standby_current_ua(bat->client, &stb_c) == 0);
+		stb_c_ok  = (read_standby_current_ua(bat, &stb_c) == 0);
 	}
 
 	spin_lock(&bat->lock);
-	bat->soc_fractional = frac_soc;
 	if (v_ok)
 		bat->voltage_uv = v;
 	if (t_ok)
@@ -696,22 +677,27 @@ static void oneup_battery_work(struct work_struct *work)
 		bat->soh = soh;
 	if (stb_c_ok)
 		bat->standby_current_ua = stb_c;
+
+	cur_soc            = bat->soc;
+	cur_ac_online      = bat->ac_online;
+	cur_status         = bat->status;
+	cur_capacity_level = bat->capacity_level;
 	spin_unlock(&bat->lock);
 
-	if (bat->ac_online == 0 && bat->soc < READ_ONCE(soc_shutdown) &&
+	if (cur_ac_online == 0 && cur_soc < READ_ONCE(soc_shutdown) &&
 	    !bat->shutdown_triggered) {
 		dev_info(&bat->client->dev,
 			 "Performing system shutdown: unplugged and power at %d%%\n",
-			 bat->soc);
+			 cur_soc);
 		bat->shutdown_triggered = true;
-		shutdown_helper();
+		orderly_poweroff(false);
 	}
 
-	if (bat->soc != prev_soc || bat->status != prev_status ||
-	    bat->capacity_level != prev_capacity_level)
+	if (cur_soc != prev_soc || cur_status != prev_status ||
+	    cur_capacity_level != prev_capacity_level)
 		power_supply_changed(bat->bat_psy);
 
-	if (bat->ac_online != prev_ac_online)
+	if (cur_ac_online != prev_ac_online)
 		power_supply_changed(bat->ac_psy);
 
 	schedule_delayed_work(&bat->work, round_jiffies_relative(HZ));
@@ -744,9 +730,9 @@ static int oneup_bat_get_property(struct power_supply *psy,
 {
 	struct oneup_battery *bat = power_supply_get_drvdata(psy);
 	int soc, soc_frac, status, capacity_level;
-	int voltage_uv, current_ua, temp_dc;
+	int voltage_uv, current_ua, current_avg_ua, temp_dc;
 	int cycle_count, soh;
-	s64 full_uAh;
+	s64 full_uAh, full_uWh;
 
 	spin_lock(&bat->lock);
 	soc            = bat->soc;
@@ -755,12 +741,14 @@ static int oneup_bat_get_property(struct power_supply *psy,
 	capacity_level = bat->capacity_level;
 	voltage_uv     = bat->voltage_uv;
 	current_ua     = bat->current_ua;
+	current_avg_ua = bat->current_avg_ua;
 	temp_dc        = bat->temp_dc;
 	cycle_count    = bat->cycle_count;
 	soh            = bat->soh;
 	spin_unlock(&bat->lock);
 
 	full_uAh = (s64)TOTAL_CHARGE * soh / 100LL;
+	full_uWh = (s64)TOTAL_ENERGY_UWH * soh / 100LL;
 
 	switch (psp) {
 	case POWER_SUPPLY_PROP_STATUS:
@@ -803,6 +791,10 @@ static int oneup_bat_get_property(struct power_supply *psy,
 		val->intval = (status == POWER_SUPPLY_STATUS_FULL && abs(current_ua) < 50000)
 			? 0 : current_ua;
 		break;
+	case POWER_SUPPLY_PROP_CURRENT_AVG:
+		val->intval = (status == POWER_SUPPLY_STATUS_FULL && abs(current_avg_ua) < 50000)
+			? 0 : current_avg_ua;
+		break;
 	case POWER_SUPPLY_PROP_POWER_NOW:
 		val->intval = (status == POWER_SUPPLY_STATUS_FULL && abs(current_ua) < 50000)
 			? 0 : (int)div_s64((s64)(voltage_uv * CELLS_IN_SERIES) * abs(current_ua), 1000000LL);
@@ -828,12 +820,34 @@ static int oneup_bat_get_property(struct power_supply *psy,
 	case POWER_SUPPLY_PROP_CHARGE_FULL:
 		val->intval = (int)full_uAh;
 		break;
-	case POWER_SUPPLY_PROP_TIME_TO_EMPTY_AVG:
+	case POWER_SUPPLY_PROP_ENERGY_FULL_DESIGN:
+		val->intval = TOTAL_ENERGY_UWH;
+		break;
+	case POWER_SUPPLY_PROP_ENERGY_FULL:
+		val->intval = (int)full_uWh;
+		break;
+	case POWER_SUPPLY_PROP_ENERGY_NOW:
+		val->intval = (int)div_s64((s64)soc_frac * full_uWh, 25600LL);
+		break;
+	case POWER_SUPPLY_PROP_TIME_TO_EMPTY_NOW:
 		if (status == POWER_SUPPLY_STATUS_DISCHARGING) {
 			int abs_curr = abs(current_ua);
 			if (abs_curr > 50000) {
-				s64 charge_uAh = (s64)soc * full_uAh / 100LL;
+				s64 charge_uAh = div_s64((s64)soc_frac * full_uAh, 25600LL);
 				val->intval = (int)div_s64(charge_uAh * 3600LL, abs_curr);
+			} else {
+				val->intval = soc * TOTAL_LIFE_SECONDS / 100;
+			}
+		} else {
+			val->intval = 0;
+		}
+		break;
+	case POWER_SUPPLY_PROP_TIME_TO_EMPTY_AVG:
+		if (status == POWER_SUPPLY_STATUS_DISCHARGING) {
+			int abs_avg = abs(current_avg_ua);
+			if (abs_avg > 50000) {
+				s64 charge_uAh = div_s64((s64)soc_frac * full_uAh, 25600LL);
+				val->intval = (int)div_s64(charge_uAh * 3600LL, abs_avg);
 			} else {
 				val->intval = soc * TOTAL_LIFE_SECONDS / 100;
 			}
@@ -843,9 +857,11 @@ static int oneup_bat_get_property(struct power_supply *psy,
 		break;
 	case POWER_SUPPLY_PROP_TIME_TO_FULL_NOW:
 		if (status == POWER_SUPPLY_STATUS_CHARGING) {
-			if (current_ua > 50000) {
-				s64 rem_uAh = (s64)(100 - soc) * full_uAh / 100LL;
-				val->intval = (int)div_s64(rem_uAh * 3600LL, current_ua);
+			int chg_curr = (current_avg_ua > 50000) ? current_avg_ua : current_ua;
+			if (chg_curr > 50000) {
+				s64 charge_uAh = div_s64((s64)soc_frac * full_uAh, 25600LL);
+				s64 rem_uAh = (full_uAh > charge_uAh) ? (full_uAh - charge_uAh) : 0;
+				val->intval = (int)div_s64(rem_uAh * 3600LL, chg_curr);
 			} else {
 				val->intval = (100 - soc) * TOTAL_CHARGE_FULL_SECONDS / 100;
 			}
@@ -886,16 +902,12 @@ static int oneup_battery_resume(struct device *dev)
 static DEFINE_SIMPLE_DEV_PM_OPS(oneup_battery_pm_ops,
 				oneup_battery_suspend, oneup_battery_resume);
 
-/*
- * Called by the I2C core when a device matching our id_table or of_match_table
- * is discovered.  Allocates per-device state, initialises the battery IC,
- * registers the power supplies, and kicks off the periodic work.
- */
 static int oneup_battery_probe(struct i2c_client *client)
 {
 	struct oneup_battery *bat;
 	struct power_supply_config bat_cfg = {};
 	struct power_supply_config ac_cfg = {};
+	int init_soc, init_frac_soc = 100 << 8;
 	int ret;
 
 	if (!i2c_check_functionality(client->adapter, I2C_FUNC_SMBUS_BYTE_DATA))
@@ -906,6 +918,8 @@ static int oneup_battery_probe(struct i2c_client *client)
 		return -ENOMEM;
 
 	bat->client         = client;
+	bat->word_read_ok   = i2c_check_functionality(client->adapter,
+						      I2C_FUNC_SMBUS_WORD_DATA);
 	bat->soc            = 100;
 	bat->soc_fractional = 100 << 8;
 	bat->cycle_count    = 0;
@@ -917,6 +931,7 @@ static int oneup_battery_probe(struct i2c_client *client)
 	bat->capacity_level = POWER_SUPPLY_CAPACITY_LEVEL_HIGH;
 	bat->voltage_uv     = 3800000;
 	bat->current_ua     = 0;
+	bat->current_avg_ua = 0;
 	bat->temp_dc        = 250;
 	spin_lock_init(&bat->lock);
 	i2c_set_clientdata(client, bat);
@@ -926,24 +941,21 @@ static int oneup_battery_probe(struct i2c_client *client)
 		dev_warn(&client->dev,
 			 "Profile init failed; SOC readings may be inaccurate\n");
 
-	/*
-	 * Read the real AC state before registering the power supplies so the
-	 * first get_property call is correct.  Without this, the hardcoded
-	 * ac_online=1 above causes the debounce logic to report AC connected
-	 * for several poll cycles when the system boots on battery.
-	 */
-	read_voltage_uv(client, &bat->voltage_uv);
-	if (read_current_ua(client, &bat->current_ua, NULL) == 0) {
+	/* Seed initial telemetry before registering power supplies */
+	read_voltage_uv(bat, &bat->voltage_uv);
+	if (read_current_ua(bat, &bat->current_ua) == 0) {
+		update_current_avg(bat, bat->current_ua);
 		bat->ac_online    = (bat->current_ua >= AC_DISCHARGE_THRESHOLD_UA) ? 1 : 0;
 		bat->ac_candidate = bat->ac_online;
 		dev_info(&client->dev, "AC Power is %s at boot.\n",
 			 bat->ac_online ? "connected" : "not connected");
 	}
 	read_temperature_dc(client, &bat->temp_dc);
-	read_cycle_count(client, &bat->cycle_count);
+	read_cycle_count(bat, &bat->cycle_count);
 	read_soh(client, &bat->soh);
-	read_standby_current_ua(client, &bat->standby_current_ua);
-	set_power_states(bat, check_battery_state(bat, &bat->soc_fractional));
+	read_standby_current_ua(bat, &bat->standby_current_ua);
+	init_soc = check_battery_state(bat, &init_frac_soc);
+	set_power_states(bat, init_soc, init_frac_soc);
 
 	bat_cfg.drv_data = bat;
 	bat_cfg.fwnode   = dev_fwnode(&client->dev);
@@ -971,7 +983,7 @@ static int oneup_battery_probe(struct i2c_client *client)
 	if (ret)
 		return ret;
 
-	schedule_delayed_work(&bat->work, 0);
+	schedule_delayed_work(&bat->work, round_jiffies_relative(HZ));
 
 	dev_info(&client->dev, "Probe successful (v%d.%d.%d)\n",
 		 VERSION_MAJOR, VERSION_MINOR, VERSION_EDIT);
@@ -1003,13 +1015,13 @@ static int param_set_soc_shutdown(const char *key, const struct kernel_param *kp
 
 	if (soc == 0) {
 		pr_info("Disabling automatic shutdown when battery is below threshold.\n");
-		soc_shutdown = 0;
+		WRITE_ONCE(soc_shutdown, 0);
 		return 0;
 	}
 
 	if (soc >= 1 && soc <= 20) {
 		pr_info("Changing automatic shutdown when battery is below %ld%%\n", soc);
-		soc_shutdown = soc;
+		WRITE_ONCE(soc_shutdown, (int)soc);
 		return 0;
 	}
 
@@ -1020,7 +1032,7 @@ static int param_set_soc_shutdown(const char *key, const struct kernel_param *kp
 
 static int param_get_soc_shutdown(char *buffer, const struct kernel_param *kp)
 {
-	return sysfs_emit(buffer, "%d\n", soc_shutdown);
+	return sysfs_emit(buffer, "%d\n", READ_ONCE(soc_shutdown));
 }
 
 static const struct kernel_param_ops param_ops_soc_shutdown = {
