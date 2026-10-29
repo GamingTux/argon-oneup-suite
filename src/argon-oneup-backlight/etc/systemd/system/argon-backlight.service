@@ -5,7 +5,8 @@ Before=display-manager.service sddm.service lightdm.service
 
 [Service]
 Type=oneshot
-ExecStart=/usr/sbin/argon-backlight-init
+ExecStart=/usr/sbin/argon-backlight-init start
+ExecStop=/usr/sbin/argon-backlight-init stop
 RemainAfterExit=yes
 
 [Install]

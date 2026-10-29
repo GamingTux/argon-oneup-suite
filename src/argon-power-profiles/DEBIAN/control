@@ -1,5 +1,5 @@
 Package: argon-power-profiles
-Version: 1.2.4
+Version: 1.2.5
 Architecture: all
 Maintainer: GamingTux <gamingtux@users.noreply.github.com>
 Section: admin
@@ -15,6 +15,7 @@ Description: Hardware Power Profiles Daemon for Raspberry Pi & Argon ONE UP
  Exports standard org.freedesktop.UPower.PowerProfiles and net.hadess.PowerProfiles
  D-Bus APIs for KDE Plasma, GNOME, and powerprofilesctl.
  Dynamically manages:
-  - CPU Governors (powersave @ 1500MHz, ondemand dynamic, performance @ max freq)
+  - CPU Governors (powersave @ 1500MHz, schedutil 1ms dynamic, performance @ max freq)
+  - PCIe ASPM & Kernel Workqueue Power Efficiency per profile
   - WiFi Power Saving (powersave on / off)
   - Display Backlight with per-profile memory and automatic restore

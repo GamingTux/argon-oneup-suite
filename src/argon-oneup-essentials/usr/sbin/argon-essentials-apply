@@ -14,14 +14,85 @@ if [ -f "$CONF_FILE" ]; then
     . "$CONF_FILE"
 fi
 
+apply_runtime_perf() {
+    # 1. Pre-tune ondemand governor parameters (in case ondemand is selected)
+    for od_dir in /sys/devices/system/cpu/cpufreq/ondemand /sys/devices/system/cpu/cpufreq/policy*/ondemand; do
+        [ -d "$od_dir" ] || continue
+        echo 10000 > "$od_dir/sampling_rate" 2>/dev/null || true
+        echo 25 > "$od_dir/up_threshold" 2>/dev/null || true
+        echo 10 > "$od_dir/sampling_down_factor" 2>/dev/null || true
+        echo 1 > "$od_dir/io_is_busy" 2>/dev/null || true
+    done
+
+    # 2. Switch default governor from sluggish ondemand (100ms) to scheduler-driven schedutil (1ms)
+    for gov_file in /sys/devices/system/cpu/cpufreq/policy*/scaling_governor; do
+        [ -f "$gov_file" ] || continue
+        cur_gov=$(cat "$gov_file" 2>/dev/null || true)
+        if [ "$cur_gov" = "ondemand" ] || [ -z "$cur_gov" ]; then
+            echo schedutil > "$gov_file" 2>/dev/null || true
+        fi
+    done
+    for su_dir in /sys/devices/system/cpu/cpufreq/schedutil /sys/devices/system/cpu/cpufreq/policy*/schedutil; do
+        [ -d "$su_dir" ] || continue
+        echo 1000 > "$su_dir/rate_limit_us" 2>/dev/null || true
+    done
+
+    # 3. Spread heavy ARM64 GICv2 Level IRQs across CPU0..CPU3
+    #    CPU0: RP1 Southbridge (xHCI USB 3.0, I2C)
+    #    CPU1: dwc2_hsotg (internal keyboard, touchpad, webcam, C-Media USB audio)
+    #    CPU2: v3d (VideoCore VII 3D GPU)
+    #    CPU3: vc4/hvs (1920x1200 display pipeline) & mmc0/mmc1 (SD/eMMC & Wi-Fi SDIO)
+    for irq_dir in /proc/irq/[0-9]*; do
+        [ -d "$irq_dir" ] || continue
+        aff_file="$irq_dir/smp_affinity_list"
+        [ -w "$aff_file" ] || continue
+        for action_dir in "$irq_dir"/*; do
+            [ -d "$action_dir" ] || continue
+            name=$(basename "$action_dir")
+            case "$name" in
+                *dwc2*)
+                    echo 1 > "$aff_file" 2>/dev/null || true
+                    break
+                    ;;
+                *v3d*)
+                    echo 2 > "$aff_file" 2>/dev/null || true
+                    break
+                    ;;
+                *vc4*|*hvs*|*mmc0*|*mmc1*)
+                    echo 3 > "$aff_file" 2>/dev/null || true
+                    break
+                    ;;
+                *rp1*|*xhci*)
+                    echo 0 > "$aff_file" 2>/dev/null || true
+                    break
+                    ;;
+            esac
+        done
+    done
+
+    # 4. Enable 4-Core Receive Packet Steering (RPS/RFS) on active network interfaces
+    for rx_dir in /sys/class/net/wlan*/queues/rx-0 /sys/class/net/eth*/queues/rx-0; do
+        [ -d "$rx_dir" ] || continue
+        echo f > "$rx_dir/rps_cpus" 2>/dev/null || true
+        echo 4096 > "$rx_dir/rps_flow_cnt" 2>/dev/null || true
+    done
+
+    # 5. Put unpopulated CM5 Gigabit Ethernet PHY into MDIO BMCR_PDOWN suspend
+    if [ "${DISABLE_UNUSED_ETHERNET:-1}" = "1" ] && [ -d /sys/class/net/eth0 ]; then
+        /sbin/ip link set dev eth0 down 2>/dev/null || true
+    fi
+}
+
+if [ "${1:-}" = "--runtime" ]; then
+    apply_runtime_perf
+    exit 0
+fi
+
 BOOT_CFG=""
-OVL_DIR=""
 if [ -f /boot/firmware/config.txt ]; then
     BOOT_CFG="/boot/firmware/config.txt"
-    OVL_DIR="/boot/firmware/overlays"
 elif [ -f /boot/config.txt ]; then
     BOOT_CFG="/boot/config.txt"
-    OVL_DIR="/boot/overlays"
 fi
 
 remove_block() {
@@ -30,23 +101,54 @@ remove_block() {
     fi
 }
 
-if [ "$1" = "--remove" ]; then
+remove_runtime_tweaks() {
+    rm -f /boot/firmware/overlays/cm5-disable-ethernet.dtbo /boot/overlays/cm5-disable-ethernet.dtbo 2>/dev/null || true
+    if [ -L /etc/systemd/zram-generator.conf.d/20-rpi-swap-zram0-ctrl.conf ]; then
+        rm -f /etc/systemd/zram-generator.conf.d/20-rpi-swap-zram0-ctrl.conf 2>/dev/null || true
+    fi
+    if [ -L /etc/systemd/system/NetworkManager-wait-online.service ]; then
+        rm -f /etc/systemd/system/NetworkManager-wait-online.service 2>/dev/null || true
+    fi
+    if [ -L /etc/systemd/system/systemd-networkd-wait-online.service ]; then
+        rm -f /etc/systemd/system/systemd-networkd-wait-online.service 2>/dev/null || true
+    fi
+    if [ -f /etc/xdg/labwc/rc.xml ] && grep -q "argon-brightness-step" /etc/xdg/labwc/rc.xml; then
+        sed -i '/<keybind key="XF86MonBrightnessUp">/,/<\/keybind>/d; /<keybind key="XF86MonBrightnessDown">/,/<\/keybind>/d' /etc/xdg/labwc/rc.xml 2>/dev/null || true
+        pkill -HUP labwc 2>/dev/null || true
+    fi
+    if [ -f /etc/default/irqbalance ] && grep -q "argon-oneup-irq-policy" /etc/default/irqbalance; then
+        sed -i '/argon-oneup-irq-policy/d' /etc/default/irqbalance 2>/dev/null || true
+        systemctl try-restart irqbalance.service 2>/dev/null || true
+    fi
+}
+
+if [ "${1:-}" = "--remove" ]; then
     remove_block
+    remove_runtime_tweaks
     exit 0
 fi
 
-# Install cm5-disable-ethernet.dtbo into boot overlays directory
-if [ -n "$OVL_DIR" ] && [ -d "$OVL_DIR" ] && [ -f /usr/share/argon-oneup/cm5-disable-ethernet.dtbo ]; then
-    cp /usr/share/argon-oneup/cm5-disable-ethernet.dtbo "${OVL_DIR}/cm5-disable-ethernet.dtbo" 2>/dev/null || true
+# Clean up obsolete files from older package versions
+rm -f /boot/firmware/overlays/cm5-disable-ethernet.dtbo /boot/overlays/cm5-disable-ethernet.dtbo 2>/dev/null || true
+rm -f /etc/sysctl.d/90-argon-oneup-essentials.conf 2>/dev/null || true
+if [ -f /etc/ddcutil/ddcutilrc ]; then
+    rm -f /etc/ddcutil/ddcutilrc 2>/dev/null || true
+    rmdir --ignore-fail-on-non-empty /etc/ddcutil 2>/dev/null || true
 fi
 
 if [ -n "$BOOT_CFG" ] && [ -f "$BOOT_CFG" ]; then
     remove_block
+    HAS_I2C_ARM=0
+    if grep -q "^[[:space:]]*dtparam=i2c_arm=on" "$BOOT_CFG" 2>/dev/null; then
+        HAS_I2C_ARM=1
+    fi
 
     {
         echo "# --- BEGIN ARGON-ONEUP-ESSENTIALS ---"
         echo "[all]"
-        echo "dtparam=i2c_arm=on"
+        if [ "$HAS_I2C_ARM" = "0" ]; then
+            echo "dtparam=i2c_arm=on"
+        fi
         echo "camera_auto_detect=0"
         echo "display_auto_detect=0"
         if [ "${ENABLE_NVME_GEN3:-1}" = "1" ]; then
@@ -83,8 +185,19 @@ if [ -n "$BOOT_CFG" ] && [ -f "$BOOT_CFG" ]; then
     } >> "$BOOT_CFG"
 fi
 
-# Configure PSU_MAX_CURRENT=5000 in Raspberry Pi 5 / CM5 EEPROM if supported
-if [ -x /usr/sbin/argononeup-eepromconfig.py ] && command -v rpi-eeprom-update >/dev/null 2>&1; then
+# Configure irqbalance policy script if irqbalance is installed
+if [ -f /etc/default/irqbalance ] && [ -x /usr/bin/argon-oneup-irq-policy ]; then
+    if ! grep -q "argon-oneup-irq-policy" /etc/default/irqbalance; then
+        echo 'IRQBALANCE_ARGS="--policyscript=/usr/bin/argon-oneup-irq-policy"' >> /etc/default/irqbalance
+        systemctl try-restart irqbalance.service 2>/dev/null || true
+    fi
+fi
+
+# Apply runtime CPU/IRQ/RPS/eth0 optimizations immediately
+apply_runtime_perf
+
+# Configure PSU_MAX_CURRENT=5000, POWER_OFF_ON_HALT=1, SDRAM_BANKLOW=1 in EEPROM if supported
+if [ -x /usr/sbin/argononeup-eepromconfig.py ] && command -v rpi-eeprom-config >/dev/null 2>&1; then
     /usr/sbin/argononeup-eepromconfig.py >/dev/null 2>&1 || true
 fi
 
@@ -105,7 +218,7 @@ if [ -d /etc/fonts/conf.d ] && [ -d /usr/share/fontconfig/conf.avail ]; then
     fi
 fi
 
-# Apply runtime optimizations immediately where possible
+# Apply sysctl and BBR runtime optimizations immediately
 modprobe tcp_bbr 2>/dev/null || true
 sysctl --system >/dev/null 2>&1 || true
 

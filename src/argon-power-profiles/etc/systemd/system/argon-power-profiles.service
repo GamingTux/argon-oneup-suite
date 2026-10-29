@@ -1,6 +1,6 @@
 [Unit]
 Description=Argon ONE UP / Raspberry Pi Power Profiles Daemon
-Documentation=https://github.com/argon40tech/argon-oneup
+Documentation=https://github.com/GamingTux/argon-oneup-suite
 Conflicts=power-profiles-daemon.service
 Before=plasma-powerdevil.service
 After=local-fs.target

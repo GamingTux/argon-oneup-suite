@@ -25,9 +25,9 @@ else
     STRIP_BIN="aarch64-linux-gnu-strip"
 fi
 
-if [ -f "${EXTRAS_SRC_DIR}/argon-oneup-plasma-widget/argon-oneup-telemetry.c" ]; then
+if [ -f "${EXTRAS_SRC_DIR}/argon-oneup-plasma-widget/usr/src/argon-oneup-telemetry.c" ]; then
     echo "Compiling argon-oneup-telemetry binary (C / Cortex-A76)..."
-    "${CC_BIN}" -O3 -pipe -mcpu=cortex-a76+crypto+dotprod "${EXTRAS_SRC_DIR}/argon-oneup-plasma-widget/argon-oneup-telemetry.c" -o "${EXTRAS_SRC_DIR}/argon-oneup-plasma-widget/usr/bin/argon-oneup-telemetry"
+    "${CC_BIN}" -O3 -pipe -mcpu=cortex-a76+crypto+dotprod "${EXTRAS_SRC_DIR}/argon-oneup-plasma-widget/usr/src/argon-oneup-telemetry.c" -o "${EXTRAS_SRC_DIR}/argon-oneup-plasma-widget/usr/bin/argon-oneup-telemetry"
     "${STRIP_BIN}" "${EXTRAS_SRC_DIR}/argon-oneup-plasma-widget/usr/bin/argon-oneup-telemetry"
 fi
 
@@ -36,6 +36,24 @@ if [ -f "${SRC_DIR}/argon-oneup-sensors/usr/src/ksystemstats-ns-helper.c" ]; the
     "${CC_BIN}" -O2 -pipe -Wall -Wextra -mcpu=cortex-a76 "${SRC_DIR}/argon-oneup-sensors/usr/src/ksystemstats-ns-helper.c" -o "${SRC_DIR}/argon-oneup-sensors/usr/bin/ksystemstats-ns-helper"
     "${STRIP_BIN}" "${SRC_DIR}/argon-oneup-sensors/usr/bin/ksystemstats-ns-helper"
 fi
+
+if command -v dtc >/dev/null 2>&1; then
+    echo "Compiling Device Tree Overlays (.dts -> .dtbo)..."
+    dtc -@ -I dts -O dtb -Wno-gpios_property \
+        -o "${SRC_DIR}/argon-oneup-lid/usr/share/argon-oneup/overlays/argon-oneup-lid.dtbo" \
+        "${SRC_DIR}/argon-oneup-lid/usr/share/argon-oneup/dts/argon-oneup-lid.dts"
+    dtc -@ -I dts -O dtb -Wno-gpios_property \
+        -o "${SRC_DIR}/argon-oneup-battery/usr/share/argon-oneup/overlays/argon-oneup-battery.dtbo" \
+        "${SRC_DIR}/argon-oneup-battery/usr/share/argon-oneup/dts/argon-oneup-battery.dts"
+    dtc -@ -I dts -O dtb -Wno-gpios_property \
+        -o "${SRC_DIR}/cm5-mmc-fix/usr/share/cm5-mmc-fix/overlays/cm5-sdcard-fast.dtbo" \
+        "${SRC_DIR}/cm5-mmc-fix/usr/share/cm5-mmc-fix/cm5-sdcard-fast.dts"
+fi
+
+echo "Normalizing file and directory permissions (0755 / 0644)..."
+find "${SRC_DIR}" "${EXTRAS_SRC_DIR}" -type d -exec chmod 0755 {} +
+find "${SRC_DIR}" "${EXTRAS_SRC_DIR}" -type f -perm -0100 -exec chmod 0755 {} +
+find "${SRC_DIR}" "${EXTRAS_SRC_DIR}" -type f -not -perm -0100 -exec chmod 0644 {} +
 
 for pkg in argon-oneup-essentials argon-oneup-backlight argon-oneup-battery argon-oneup-lid argon-oneup-sensors argon-power-profiles cm5-mmc-fix rpi-fake-sleep argon-oneup-suite; do
     PKG_PATH="${SRC_DIR}/${pkg}"
@@ -57,7 +75,7 @@ for pkg in argon-oneup-plasma-widget argon-wfplug-batt; do
         ARCH=$(grep "^Architecture:" "${PKG_PATH}/DEBIAN/control" | awk '{print $2}')
         VER=$(grep "^Version:" "${PKG_PATH}/DEBIAN/control" | awk '{print $2}')
         DEB_NAME="${pkg}_${VER}_${ARCH}.deb"
-        dpkg-deb --root-owner-group -b "${PKG_PATH}" "${EXTRAS_DIST_DIR}/${DEB_NAME}"
+        dpkg-deb --root-owner-group -b "${PKG_PATH}" "${DIST_DIR}/extras/${DEB_NAME}"
     fi
 done
 

@@ -1,14 +1,14 @@
 Package: argon-oneup-backlight
-Version: 1.1.0
+Version: 1.2.5
 Architecture: all
 Maintainer: GamingTux <gamingtux@users.noreply.github.com>
-Depends: ddcci-dkms (>= 0.4.5), i2c-tools
+Depends: ddcci-dkms (>= 0.4.5)
 Recommends: linux-headers-rpi-2712 | linux-headers-raspi | linux-headers-arm64 | linux-headers-rpi-v8 | linux-headers-generic
 Section: misc
 Priority: optional
 Homepage: https://github.com/GamingTux/argon-oneup-suite
 Description: Standard Linux Backlight Driver Integration for Argon ONE UP
- Bridges the internal DDC/CI display on I2C bus 14 to the standard
+ Bridges the internal DDC/CI display on HDMI-A-2 (I2C bus 14) to the standard
  Linux /sys/class/backlight subsystem, providing universal hardware
  brightness keys, slider, and OSD support across all desktop environments
  (KDE Plasma, Raspberry Pi OS Labwc/Wayfire, GNOME, XFCE, etc.).

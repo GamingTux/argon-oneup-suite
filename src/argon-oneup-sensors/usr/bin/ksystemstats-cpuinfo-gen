@@ -7,16 +7,14 @@
 # to spin forever at EOF (KDE bug #493093).
 #
 # This script writes a corrected cpuinfo — cpu MHz injected into each block,
-# trailing non-CPU fields stripped — to the path given as $1.
+# trailing non-CPU fields stripped — atomically to the path given as $1.
+set -eu
 
 OUTPUT="${1:?output path required}"
+TMP_OUT="${OUTPUT}.tmp.$$"
 
-declare -a FREQS
-i=0
-for f in /sys/devices/system/cpu/cpu[0-9]*/cpufreq/scaling_cur_freq; do
-    read -r FREQS[$i] < "$f" 2>/dev/null || FREQS[$i]=2400000
-    i=$((i + 1))
-done
+umask 0077
+trap 'rm -f "$TMP_OUT"' EXIT
 
 {
     while IFS= read -r line; do
@@ -24,8 +22,15 @@ done
         printf '%s\n' "$line"
         if [[ "$line" =~ ^processor[[:space:]]*:[[:space:]]*([0-9]+) ]]; then
             cpu="${BASH_REMATCH[1]}"
-            freq="${FREQS[$cpu]:-2400000}"
+            freq=2400000
+            freq_file="/sys/devices/system/cpu/cpu${cpu}/cpufreq/scaling_cur_freq"
+            if [ -r "$freq_file" ]; then
+                read -r freq < "$freq_file" 2>/dev/null || freq=2400000
+            fi
+            [[ "$freq" =~ ^[0-9]+$ ]] || freq=2400000
             printf "cpu MHz\t\t: %d.%03d\n" $((freq / 1000)) $((freq % 1000))
         fi
     done < /proc/cpuinfo
-} > "$OUTPUT"
+} > "$TMP_OUT"
+
+mv -f "$TMP_OUT" "$OUTPUT"

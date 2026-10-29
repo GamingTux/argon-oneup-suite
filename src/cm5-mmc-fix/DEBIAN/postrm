@@ -2,21 +2,12 @@
 set -e
 
 if [ "$1" = "remove" ] || [ "$1" = "purge" ]; then
-    BOOT_DIR=""
     for d in /boot/firmware /boot; do
-        if [ -d "$d/overlays" ]; then
-            BOOT_DIR="$d"
-            break
+        rm -f "$d/overlays/cm5-sdcard-fast.dtbo" 2>/dev/null || true
+        if [ -f "$d/config.txt" ] && grep -q "^[[:space:]]*dtoverlay=cm5-sdcard-fast" "$d/config.txt"; then
+            sed -i '/^[[:space:]]*dtoverlay=cm5-sdcard-fast/d' "$d/config.txt" 2>/dev/null || true
+            echo "[cm5-mmc-fix] Removed dtoverlay=cm5-sdcard-fast from $d/config.txt"
         fi
     done
-
-    if [ -n "$BOOT_DIR" ]; then
-        rm -f "$BOOT_DIR/overlays/cm5-sdcard-fast.dtbo"
-        CONFIG="$BOOT_DIR/config.txt"
-        if [ -f "$CONFIG" ]; then
-            sed -i '/^[[:space:]]*dtoverlay=cm5-sdcard-fast/d' "$CONFIG"
-            echo "[cm5-mmc-fix] Removed dtoverlay=cm5-sdcard-fast from $CONFIG"
-        fi
-    fi
 fi
 exit 0

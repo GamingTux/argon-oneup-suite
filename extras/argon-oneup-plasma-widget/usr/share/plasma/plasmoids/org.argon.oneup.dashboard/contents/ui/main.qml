@@ -21,7 +21,7 @@ PlasmoidItem {
             "total_load": 0,
             "max_mhz": 2800,
             "temp_c": 36.5,
-            "governor": "ondemand"
+            "governor": "schedutil"
         },
         "gpu": {
             "percent": 0,

@@ -16,6 +16,12 @@ if [ -n "$BOOT_DIR" ]; then
 
     CONFIG="$BOOT_DIR/config.txt"
     if [ -f "$CONFIG" ]; then
+        if ! grep -q "^[[:space:]]*dtparam=i2c_arm=on" "$CONFIG" || ! grep -q "^[[:space:]]*dtoverlay=argon-oneup-battery" "$CONFIG"; then
+            LAST_SEC=$(grep -E '^[[:space:]]*\[[^]]+\]' "$CONFIG" | tail -n1 | tr -d '[:space:]' || true)
+            if [ -n "$LAST_SEC" ] && [ "$LAST_SEC" != "[all]" ]; then
+                printf '\n[all]\n' >> "$CONFIG"
+            fi
+        fi
         if ! grep -q "^[[:space:]]*dtparam=i2c_arm=on" "$CONFIG"; then
             echo "dtparam=i2c_arm=on" >> "$CONFIG"
             echo "[argon-oneup-battery] Enabled dtparam=i2c_arm=on in $CONFIG"
@@ -65,7 +71,9 @@ fi
 # Enable I2C1 and load battery overlay at runtime if possible (no reboot required)
 command -v dtparam >/dev/null 2>&1 && dtparam i2c_arm=on 2>/dev/null || true
 if [ -n "$BOOT_DIR" ] && [ -f "$BOOT_DIR/overlays/argon-oneup-battery.dtbo" ] && [ ! -e /sys/bus/i2c/devices/1-0064 ]; then
-    command -v dtoverlay >/dev/null 2>&1 && dtoverlay "$BOOT_DIR/overlays/argon-oneup-battery.dtbo" 2>/dev/null || true
+    if command -v dtoverlay >/dev/null 2>&1; then
+        dtoverlay -d "$BOOT_DIR/overlays" argon-oneup-battery 2>/dev/null || dtoverlay argon-oneup-battery 2>/dev/null || true
+    fi
 fi
 
 # Clean up legacy /etc/modules entry and duplicate sensors config from older versions

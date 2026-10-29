@@ -1,12 +1,17 @@
 #!/bin/sh
 # Step display backlight brightness up or down (e.g. argon-brightness-step +10 or -10)
 DELTA="${1:-+10}"
+case "$DELTA" in
+    [+-][0-9]*|[0-9]*) ;;
+    *) DELTA="+10" ;;
+esac
+VAL="${DELTA#+}"
 for bl in /sys/class/backlight/*; do
     [ -f "$bl/brightness" ] && [ -f "$bl/max_brightness" ] || continue
     CUR=$(cat "$bl/brightness" 2>/dev/null || echo 50)
     MAX=$(cat "$bl/max_brightness" 2>/dev/null || echo 100)
-    STEP=$(( MAX * ${DELTA#+} / 100 ))
-    [ "$STEP" -eq 0 ] && STEP=${DELTA#+}
+    STEP=$(( MAX * VAL / 100 ))
+    [ "$STEP" -eq 0 ] && STEP="$VAL"
     NEW=$(( CUR + STEP ))
     [ "$NEW" -lt 5 ] && NEW=5
     [ "$NEW" -gt "$MAX" ] && NEW="$MAX"

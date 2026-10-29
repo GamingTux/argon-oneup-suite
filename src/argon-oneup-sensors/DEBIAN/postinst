@@ -1,6 +1,12 @@
 #!/bin/bash
 set -e
 
+# Clean up legacy conffile drop-in in /etc if upgrading from < 1.2.5
+if [ -f /etc/systemd/user/plasma-ksystemstats.service.d/cpuinfo_fix.conf ]; then
+    rm -f /etc/systemd/user/plasma-ksystemstats.service.d/cpuinfo_fix.conf 2>/dev/null || true
+    rmdir --ignore-fail-on-non-empty /etc/systemd/user/plasma-ksystemstats.service.d 2>/dev/null || true
+fi
+
 # Set CAP_SYS_ADMIN file capability for namespace helper
 if [ -f /usr/bin/ksystemstats-ns-helper ]; then
     if ! setcap cap_sys_admin+ep /usr/bin/ksystemstats-ns-helper; then
@@ -15,12 +21,14 @@ if [ -x /usr/sbin/ksystemstats-rpi5-fix ]; then
     /usr/sbin/ksystemstats-rpi5-fix || true
 fi
 
-# Reload systemd user daemon for active sessions
+# Reload systemd user daemon and restart plasma-ksystemstats only if active
 for uid_dir in /run/user/[0-9]*; do
     if [ -d "$uid_dir" ]; then
         uid=$(basename "$uid_dir")
-        sudo -u "#$uid" XDG_RUNTIME_DIR="$uid_dir" systemctl --user daemon-reload 2>/dev/null || true
-        sudo -u "#$uid" XDG_RUNTIME_DIR="$uid_dir" systemctl --user restart plasma-ksystemstats.service 2>/dev/null || true
+        sudo -u "#$uid" XDG_RUNTIME_DIR="$uid_dir" DBUS_SESSION_BUS_ADDRESS="unix:path=${uid_dir}/bus" \
+            systemctl --user daemon-reload 2>/dev/null || true
+        sudo -u "#$uid" XDG_RUNTIME_DIR="$uid_dir" DBUS_SESSION_BUS_ADDRESS="unix:path=${uid_dir}/bus" \
+            systemctl --user try-restart plasma-ksystemstats.service 2>/dev/null || true
     fi
 done
 

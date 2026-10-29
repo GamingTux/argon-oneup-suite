@@ -27,9 +27,14 @@ DEFAULT_CONFIG = {
 
 GOVERNOR_MAP = {
     "power-saver": "powersave",
-    "balanced": "ondemand",
+    "balanced": "schedutil",
     "performance": "performance"
 }
+
+_hdmi0_regs_path = None
+_hdmi_a1_status_path = None
+_hdmi_a1_connect_retries = 0
+
 
 def write_sysfs(path, value):
     try:
@@ -41,92 +46,6 @@ def write_sysfs(path, value):
         pass
     return False
 
-def apply_governor(profile):
-    gov = GOVERNOR_MAP.get(profile, "ondemand")
-    seen_policies = set()
-    for cpu in sorted(glob.glob("/sys/devices/system/cpu/cpu[0-9]*/cpufreq")):
-        real_policy = os.path.realpath(cpu)
-        if real_policy in seen_policies:
-            continue
-        seen_policies.add(real_policy)
-        maxinfo_path = os.path.join(real_policy, "cpuinfo_max_freq")
-        max_path = os.path.join(real_policy, "scaling_max_freq")
-        gov_path = os.path.join(real_policy, "scaling_governor")
-        avail_path = os.path.join(real_policy, "scaling_available_governors")
-        target_gov = gov
-        try:
-            if target_gov == "ondemand" and os.path.isfile(avail_path):
-                with open(avail_path, "r") as fp:
-                    avail = fp.read().split()
-                if "ondemand" not in avail and "schedutil" in avail:
-                    target_gov = "schedutil"
-            if os.path.isfile(maxinfo_path) and os.path.isfile(max_path):
-                with open(maxinfo_path, "r") as fp:
-                    top_freq = fp.read().strip()
-                with open(max_path, "w") as fp:
-                    fp.write(top_freq)
-        except OSError:
-            pass
-        write_sysfs(gov_path, target_gov)
-
-    if gov == "ondemand":
-        ondemand_dirs = ["/sys/devices/system/cpu/cpufreq/ondemand"] + glob.glob("/sys/devices/system/cpu/cpufreq/policy*/ondemand")
-        for od_dir in ondemand_dirs:
-            if os.path.isdir(od_dir):
-                write_sysfs(os.path.join(od_dir, "up_threshold"), "60")
-                write_sysfs(os.path.join(od_dir, "sampling_down_factor"), "5")
-                write_sysfs(os.path.join(od_dir, "io_is_busy"), "1")
-
-    print(f"[power-profiles] Governor set to '{gov}' for profile '{profile}'")
-
-def apply_system_power_tweaks(profile):
-    # Note: Keep NVMe PCIe runtime PM ('power/control') at 'on' on BCM2712 (PCIe Gen 3),
-    # as PCIe D3 / ASPM powersupersave (L1.2) can cause link recovery timeouts on RPi 5 / CM5.
-    for nvme_ctrl in glob.glob("/sys/class/nvme/nvme*/device/power/control"):
-        write_sysfs(nvme_ctrl, "on")
-    write_sysfs("/sys/module/pcie_aspm/parameters/policy", "powersave")
-
-    # Schedule kernel workqueues onto already-awake cores instead of waking sleeping WFI cores
-    write_sysfs("/sys/module/workqueue/parameters/power_efficient", "Y")
-
-    # Lock internal BOE 1920x1200 panel (HDMI-A-2) hotplug & EDID on Argon ONE UP laptops
-    # so closing the lid (which cuts panel power in hardware) never triggers a false DRM
-    # disconnect / KWin PlaceholderOutput switch
-    if glob.glob("/sys/class/power_supply/BAT*"):
-        edid_fw_dir = "/lib/firmware/edid"
-        edid_fw_file = os.path.join(edid_fw_dir, "argon-boe-1920x1200.bin")
-        for conn in glob.glob("/sys/class/drm/card*-HDMI-A-2"):
-            try:
-                edid_path = os.path.join(conn, "edid")
-                edid_bytes = b""
-                if os.path.isfile(edid_path):
-                    with open(edid_path, "rb") as fp:
-                        edid_bytes = fp.read()
-                if len(edid_bytes) >= 128:
-                    os.makedirs(edid_fw_dir, exist_ok=True)
-                    if not os.path.isfile(edid_fw_file) or os.path.getsize(edid_fw_file) != len(edid_bytes):
-                        with open(edid_fw_file, "wb") as fp:
-                            fp.write(edid_bytes)
-                elif os.path.isfile(edid_fw_file):
-                    with open(edid_fw_file, "rb") as fp:
-                        edid_bytes = fp.read()
-                if len(edid_bytes) >= 128:
-                    for dbg_edid in glob.glob("/sys/kernel/debug/dri/*/HDMI-A-2/edid_override"):
-                        try:
-                            with open(dbg_edid, "wb") as fp:
-                                fp.write(edid_bytes)
-                        except OSError:
-                            pass
-                    write_sysfs("/sys/module/drm/parameters/edid_firmware", "HDMI-A-2:edid/argon-boe-1920x1200.bin")
-                write_sysfs("/sys/module/vc4/parameters/force_hotplug", "2")
-                write_sysfs(os.path.join(conn, "status"), "on")
-            except OSError:
-                pass
-        sync_external_hdmi_hotplug()
-
-_hdmi0_regs_path = None
-_hdmi_a1_status_path = None
-_hdmi_a1_connect_retries = 0
 
 def _is_system_sleeping():
     for freeze_path in glob.glob("/sys/fs/cgroup/user.slice/user-*.slice/user@*.service/app.slice/cgroup.freeze"):
@@ -137,6 +56,7 @@ def _is_system_sleeping():
         except OSError:
             pass
     return False
+
 
 def sync_external_hdmi_hotplug():
     """
@@ -200,10 +120,112 @@ def sync_external_hdmi_hotplug():
 
     return True
 
+
+def apply_governor(profile):
+    gov = GOVERNOR_MAP.get(profile, "schedutil")
+    seen_policies = set()
+    actual_gov = gov
+
+    for cpu in sorted(glob.glob("/sys/devices/system/cpu/cpu[0-9]*/cpufreq")):
+        real_policy = os.path.realpath(cpu)
+        if real_policy in seen_policies:
+            continue
+        seen_policies.add(real_policy)
+        maxinfo_path = os.path.join(real_policy, "cpuinfo_max_freq")
+        max_path = os.path.join(real_policy, "scaling_max_freq")
+        gov_path = os.path.join(real_policy, "scaling_governor")
+        avail_path = os.path.join(real_policy, "scaling_available_governors")
+        target_gov = gov
+        try:
+            if os.path.isfile(avail_path):
+                with open(avail_path, "r") as fp:
+                    avail = fp.read().split()
+                if target_gov == "schedutil" and "schedutil" not in avail and "ondemand" in avail:
+                    target_gov = "ondemand"
+                elif target_gov == "ondemand" and "ondemand" not in avail and "schedutil" in avail:
+                    target_gov = "schedutil"
+            if os.path.isfile(maxinfo_path) and os.path.isfile(max_path):
+                with open(maxinfo_path, "r") as fp:
+                    top_freq = fp.read().strip()
+                with open(max_path, "w") as fp:
+                    fp.write(top_freq)
+        except OSError:
+            pass
+        actual_gov = target_gov
+        write_sysfs(gov_path, target_gov)
+
+    for su_dir in ["/sys/devices/system/cpu/cpufreq/schedutil"] + glob.glob("/sys/devices/system/cpu/cpufreq/policy*/schedutil"):
+        if os.path.isdir(su_dir):
+            write_sysfs(os.path.join(su_dir, "rate_limit_us"), "1000")
+
+    for od_dir in ["/sys/devices/system/cpu/cpufreq/ondemand"] + glob.glob("/sys/devices/system/cpu/cpufreq/policy*/ondemand"):
+        if os.path.isdir(od_dir):
+            write_sysfs(os.path.join(od_dir, "sampling_rate"), "10000")
+            write_sysfs(os.path.join(od_dir, "up_threshold"), "25")
+            write_sysfs(os.path.join(od_dir, "sampling_down_factor"), "10")
+            write_sysfs(os.path.join(od_dir, "io_is_busy"), "1")
+
+    print(f"[power-profiles] Governor set to '{actual_gov}' for profile '{profile}'")
+
+
+def apply_system_power_tweaks(profile):
+    # Keep NVMe PCIe runtime PM ('power/control') at 'on' on BCM2712 (PCIe Gen 3),
+    # and match PCIe ASPM policy to the selected power profile
+    for nvme_ctrl in glob.glob("/sys/class/nvme/nvme*/device/power/control"):
+        write_sysfs(nvme_ctrl, "on")
+
+    aspm_path = "/sys/module/pcie_aspm/parameters/policy"
+    if profile == "performance":
+        if not write_sysfs(aspm_path, "performance"):
+            write_sysfs(aspm_path, "default")
+    elif profile == "balanced":
+        if not write_sysfs(aspm_path, "default"):
+            write_sysfs(aspm_path, "powersave")
+    else:
+        write_sysfs(aspm_path, "powersave")
+
+    # Schedule kernel workqueues onto already-awake cores instead of waking sleeping WFI cores
+    write_sysfs("/sys/module/workqueue/parameters/power_efficient", "Y" if profile != "performance" else "N")
+
+    # Lock internal BOE 1920x1200 panel (HDMI-A-2) hotplug & EDID on Argon ONE UP laptops
+    # so closing the lid (which cuts panel power in hardware) never triggers a false DRM
+    # disconnect / KWin PlaceholderOutput switch
+    if glob.glob("/sys/class/power_supply/BAT*"):
+        edid_fw_dir = "/lib/firmware/edid"
+        edid_fw_file = os.path.join(edid_fw_dir, "argon-boe-1920x1200.bin")
+        for conn in glob.glob("/sys/class/drm/card*-HDMI-A-2"):
+            try:
+                edid_path = os.path.join(conn, "edid")
+                edid_bytes = b""
+                if os.path.isfile(edid_path):
+                    with open(edid_path, "rb") as fp:
+                        edid_bytes = fp.read()
+                if len(edid_bytes) >= 128:
+                    os.makedirs(edid_fw_dir, exist_ok=True)
+                    if not os.path.isfile(edid_fw_file) or os.path.getsize(edid_fw_file) != len(edid_bytes):
+                        with open(edid_fw_file, "wb") as fp:
+                            fp.write(edid_bytes)
+                elif os.path.isfile(edid_fw_file):
+                    with open(edid_fw_file, "rb") as fp:
+                        edid_bytes = fp.read()
+                if len(edid_bytes) >= 128:
+                    for dbg_edid in glob.glob("/sys/kernel/debug/dri/*/HDMI-A-2/edid_override"):
+                        try:
+                            with open(dbg_edid, "wb") as fp:
+                                fp.write(edid_bytes)
+                        except OSError:
+                            pass
+                    write_sysfs("/sys/module/drm/parameters/edid_firmware", "HDMI-A-2:edid/argon-boe-1920x1200.bin")
+                write_sysfs("/sys/module/vc4/parameters/force_hotplug", "2")
+                write_sysfs(os.path.join(conn, "status"), "on")
+            except OSError:
+                pass
+        sync_external_hdmi_hotplug()
+
     # Enable standard USB runtime autosuspend on USB audio devices without unbinding drivers
     for audio_intf in glob.glob("/sys/bus/usb/drivers/snd-usb-audio/*:*"):
         usb_dev = os.path.realpath(os.path.join(audio_intf, ".."))
-        write_sysfs(os.path.join(usb_dev, "power/autosuspend_delay_ms"), "500")
+        write_sysfs(os.path.join(usb_dev, "power/autosuspend_delay_ms"), "2000")
         write_sysfs(os.path.join(usb_dev, "power/control"), "auto")
 
     # Keep RP1 xHCI (xhci-hcd.*) and DWC2 (*.usb) platform controllers at standard 'on'
@@ -222,12 +244,13 @@ def sync_external_hdmi_hotplug():
         write_sysfs("/proc/sys/vm/dirty_writeback_centisecs", "500")
         write_sysfs("/proc/sys/vm/laptop_mode", "0")
 
+
 def apply_wifi_powersave(profile):
     enable = (profile == "power-saver")
     mode = "on" if enable else "off"
     interfaces = []
     try:
-        out = subprocess.check_output(["/usr/sbin/iw", "dev"], text=True)
+        out = subprocess.check_output(["/usr/sbin/iw", "dev"], text=True, timeout=5)
         for line in out.splitlines():
             line = line.strip()
             if line.startswith("Interface "):
@@ -239,10 +262,11 @@ def apply_wifi_powersave(profile):
     for iface in interfaces:
         try:
             subprocess.run(["/usr/sbin/iw", "dev", iface, "set", "power_save", mode],
-                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5, check=False)
         except Exception:
             pass
     print(f"[power-profiles] WiFi power saving set to '{mode}' for profile '{profile}'")
+
 
 def set_brightness(val):
     val = max(5, min(100, int(val)))
@@ -270,6 +294,7 @@ def set_brightness(val):
             pass
     print(f"[power-profiles] Brightness set to {val}%")
 
+
 def read_current_brightness():
     for bl in glob.glob("/sys/class/backlight/*"):
         try:
@@ -291,6 +316,7 @@ def read_current_brightness():
             pass
     return None
 
+
 class ProfileManager:
     def __init__(self):
         self.config = {
@@ -298,6 +324,7 @@ class ProfileManager:
             "brightness": dict(DEFAULT_CONFIG["brightness"])
         }
         self.load_config()
+        self.user_profile = self.config["active_profile"]
         self.services = []
         self.holds = []
         self.cookie_counter = 1
@@ -352,15 +379,26 @@ class ProfileManager:
                 self.config["brightness"][self.active_profile] = cur
                 self.save_config()
 
-    def set_active_profile(self, profile, initial=False):
+    def notify_properties_changed(self, changed_dict):
+        changed = dbus.Dictionary(changed_dict, signature=dbus.Signature("sv"))
+        for srv in self.services:
+            srv.PropertiesChanged(srv.interface_name, changed, dbus.Array([], signature=dbus.Signature("s")))
+
+    def set_active_profile(self, profile, initial=False, from_hold=False):
         if profile not in GOVERNOR_MAP:
             return
+
+        if not from_hold:
+            self.user_profile = profile
+            if self.holds:
+                self.holds.clear()
 
         if not initial and profile != self.config["active_profile"]:
             self.sync_current_brightness()
 
         self.config["active_profile"] = profile
-        self.save_config()
+        if not from_hold:
+            self.save_config()
 
         apply_governor(profile)
         apply_system_power_tweaks(profile)
@@ -370,11 +408,11 @@ class ProfileManager:
         set_brightness(target_b)
         self.ignore_brightness_until = time.time() + 2.5
 
-        changed = dbus.Dictionary({
-            dbus.String("ActiveProfile"): dbus.String(profile, variant_level=1)
-        }, signature=dbus.Signature("sv"))
-        for srv in self.services:
-            srv.PropertiesChanged(srv.interface_name, changed, dbus.Array([], signature=dbus.Signature("s")))
+        self.notify_properties_changed({
+            dbus.String("ActiveProfile"): dbus.String(profile, variant_level=1),
+            dbus.String("ActiveProfileHolds"): dbus.Array(self.holds, signature=dbus.Signature("a{sv}"))
+        })
+
 
 class PowerProfilesService(dbus.service.Object):
     def __init__(self, bus, path, interface_name, manager):
@@ -461,27 +499,49 @@ class PowerProfilesService(dbus.service.Object):
     def PropertiesChanged(self, interface_name, changed_properties, invalidated_properties):
         pass
 
-    @dbus.service.method(INTERFACE_UPOWER, in_signature="sss", out_signature="u")
-    def HoldProfile(self, profile, reason, application_id):
+    def _hold_profile(self, profile, reason, application_id, sender):
+        if not self._is_sender_authorized(sender):
+            raise dbus.exceptions.DBusException("Permission denied")
+        prof_str = str(profile)
+        if prof_str not in GOVERNOR_MAP:
+            raise dbus.exceptions.DBusException(f"Invalid profile {prof_str}")
         cookie = self.manager.cookie_counter
         self.manager.cookie_counter += 1
         hold = dbus.Dictionary({
-            dbus.String("Profile"): dbus.String(profile, variant_level=1),
-            dbus.String("Reason"): dbus.String(reason, variant_level=1),
-            dbus.String("ApplicationId"): dbus.String(application_id, variant_level=1),
+            dbus.String("Profile"): dbus.String(prof_str, variant_level=1),
+            dbus.String("Reason"): dbus.String(str(reason), variant_level=1),
+            dbus.String("ApplicationId"): dbus.String(str(application_id), variant_level=1),
             dbus.String("Cookie"): dbus.UInt32(cookie, variant_level=1)
         }, signature=dbus.Signature("sv"))
         self.manager.holds.append(hold)
+        self.manager.set_active_profile(prof_str, from_hold=True)
         return cookie
 
-    @dbus.service.method(INTERFACE_UPOWER, in_signature="u")
-    def ReleaseProfile(self, cookie):
-        self.manager.holds = [h for h in self.manager.holds if h.get(dbus.String("Cookie")) != cookie]
-        self.ProfileReleased(cookie)
+    def _release_profile(self, cookie, sender):
+        if not self._is_sender_authorized(sender):
+            raise dbus.exceptions.DBusException("Permission denied")
+        before = len(self.manager.holds)
+        self.manager.holds = [h for h in self.manager.holds if int(h.get(dbus.String("Cookie"), 0)) != int(cookie)]
+        if len(self.manager.holds) != before:
+            self.ProfileReleased(cookie)
+            if self.manager.holds:
+                next_prof = str(self.manager.holds[-1][dbus.String("Profile")])
+                self.manager.set_active_profile(next_prof, from_hold=True)
+            else:
+                self.manager.set_active_profile(self.manager.user_profile, from_hold=True)
+
+    @dbus.service.method(INTERFACE_UPOWER, in_signature="sss", out_signature="u", sender_keyword="sender")
+    def HoldProfile(self, profile, reason, application_id, sender=None):
+        return self._hold_profile(profile, reason, application_id, sender)
+
+    @dbus.service.method(INTERFACE_UPOWER, in_signature="u", sender_keyword="sender")
+    def ReleaseProfile(self, cookie, sender=None):
+        self._release_profile(cookie, sender)
 
     @dbus.service.signal(INTERFACE_UPOWER, signature="u")
     def ProfileReleased(self, cookie):
         pass
+
 
 if __name__ == "__main__":
     dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)

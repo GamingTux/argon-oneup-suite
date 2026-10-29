@@ -1,33 +1,71 @@
 #!/bin/bash
 # Argon ONE UP DDC/CI Backlight Binder
-# Bridges internal HDMI-A-2 display on I2C-14 to /sys/class/backlight/
+# Bridges internal HDMI-A-2 display DDC I2C bus to /sys/class/backlight/
+set -u
 
-modprobe i2c-dev 2>/dev/null || true
-modprobe ddcci 2>/dev/null || true
-modprobe ddcci-backlight 2>/dev/null || true
+LOCK_FILE="/run/argon-backlight.lock"
+exec 9>"$LOCK_FILE" 2>/dev/null || true
+flock -n 9 2>/dev/null || exit 0
 
-sleep 0.2
+ACTION="${1:-start}"
 
-BUS_NUM=""
-for conn in /sys/class/drm/card*-HDMI-A-2/ddc /sys/class/drm/card*-HDMI-A-*/ddc; do
-    [ -e "$conn" ] || continue
-    STATUS_FILE="$(dirname "$conn")/status"
-    if [ -f "$STATUS_FILE" ] && [ "$(cat "$STATUS_FILE" 2>/dev/null)" = "connected" ]; then
-        REAL=$(readlink -f "$conn" 2>/dev/null)
-        NUM=$(echo "$REAL" | grep -o -E '[0-9]+$')
-        if [ -n "$NUM" ]; then
-            BUS_NUM="$NUM"
-            break
+resolve_bus_num() {
+    local conn real num
+    for conn in /sys/class/drm/card*-HDMI-A-2/ddc; do
+        [ -e "$conn" ] || continue
+        real=$(readlink -f "$conn" 2>/dev/null || true)
+        num=$(printf '%s\n' "$real" | grep -o -E '[0-9]+$' || true)
+        if [ -n "$num" ]; then
+            printf '%s\n' "$num"
+            return 0
         fi
-    fi
-done
+    done
 
-[ -z "$BUS_NUM" ] && [ -e /dev/i2c-14 ] && BUS_NUM=14
-
-if [ -n "$BUS_NUM" ]; then
-    DEV_PATH="/sys/bus/i2c/devices/i2c-${BUS_NUM}"
-    if [ -d "$DEV_PATH" ] && [ ! -e "${DEV_PATH}/${BUS_NUM}-0037" ]; then
-        echo ddcci 0x37 > "${DEV_PATH}/new_device" 2>/dev/null || true
-        logger -t argon-backlight-init "Attached ddcci 0x37 to i2c-${BUS_NUM} -> /sys/class/backlight created"
+    if [ -d /sys/bus/i2c/devices/i2c-14 ]; then
+        printf '14\n'
+        return 0
     fi
-fi
+    return 1
+}
+
+case "$ACTION" in
+    start)
+        modprobe ddcci 2>/dev/null || true
+        modprobe ddcci-backlight 2>/dev/null || true
+
+        BUS_NUM=""
+        for _ in 1 2 3 4 5 6 7 8 9 10; do
+            BUS_NUM=$(resolve_bus_num || true)
+            [ -n "$BUS_NUM" ] && break
+            sleep 0.2
+        done
+
+        if [ -n "$BUS_NUM" ]; then
+            DEV_PATH="/sys/bus/i2c/devices/i2c-${BUS_NUM}"
+            if [ -d "$DEV_PATH" ] && [ ! -e "${DEV_PATH}/${BUS_NUM}-0037" ]; then
+                echo "ddcci 0x37" > "${DEV_PATH}/new_device" 2>/dev/null || true
+                logger -t argon-backlight-init "Attached ddcci 0x37 to i2c-${BUS_NUM} -> /sys/class/backlight created"
+            fi
+        fi
+
+        for b in /sys/class/backlight/*/brightness; do
+            [ -e "$b" ] || continue
+            chgrp video "$b" 2>/dev/null || true
+            chmod 0664 "$b" 2>/dev/null || true
+        done
+        ;;
+    stop)
+        BUS_NUM=$(resolve_bus_num || true)
+        if [ -n "$BUS_NUM" ]; then
+            DEV_PATH="/sys/bus/i2c/devices/i2c-${BUS_NUM}"
+            if [ -e "${DEV_PATH}/${BUS_NUM}-0037" ]; then
+                echo "0x37" > "${DEV_PATH}/delete_device" 2>/dev/null || true
+                logger -t argon-backlight-init "Detached ddcci 0x37 from i2c-${BUS_NUM}"
+            fi
+        fi
+        ;;
+    *)
+        echo "Usage: $0 {start|stop}" >&2
+        exit 1
+        ;;
+esac

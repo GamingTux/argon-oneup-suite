@@ -3,26 +3,36 @@ set -e
 
 BOOT_DIR=""
 for d in /boot/firmware /boot; do
-    if [ -d "$d/overlays" ]; then
+    if [ -d "$d/overlays" ] || [ -f "$d/config.txt" ]; then
         BOOT_DIR="$d"
         break
     fi
 done
 
 if [ -n "$BOOT_DIR" ]; then
-    cp /usr/share/argon-oneup/overlays/argon-oneup-lid.dtbo "$BOOT_DIR/overlays/argon-oneup-lid.dtbo" 2>/dev/null || true
+    mkdir -p "$BOOT_DIR/overlays"
+    cp -f /usr/share/argon-oneup/overlays/argon-oneup-lid.dtbo "$BOOT_DIR/overlays/argon-oneup-lid.dtbo" 2>/dev/null || true
     echo "[argon-oneup-lid] Installed argon-oneup-lid.dtbo to $BOOT_DIR/overlays/"
 
     CONFIG="$BOOT_DIR/config.txt"
     if [ -f "$CONFIG" ]; then
         if ! grep -q "^[[:space:]]*dtoverlay=argon-oneup-lid" "$CONFIG"; then
+            LAST_SEC=$(grep -E '^[[:space:]]*\[[^]]+\]' "$CONFIG" | tail -n1 | tr -d '[:space:]' || true)
+            if [ -n "$LAST_SEC" ] && [ "$LAST_SEC" != "[all]" ]; then
+                printf '\n[all]\n' >> "$CONFIG"
+            fi
             echo "dtoverlay=argon-oneup-lid" >> "$CONFIG"
             echo "[argon-oneup-lid] Enabled dtoverlay=argon-oneup-lid in $CONFIG"
         fi
     fi
+
     if [ -f "$BOOT_DIR/overlays/argon-oneup-lid.dtbo" ] && [ ! -d /proc/device-tree/lid_switch ]; then
-        command -v dtoverlay >/dev/null 2>&1 && dtoverlay "$BOOT_DIR/overlays/argon-oneup-lid.dtbo" 2>/dev/null || true
-        udevadm trigger --subsystem-match=input 2>/dev/null || true
+        modprobe gpio-keys 2>/dev/null || true
+        if command -v dtoverlay >/dev/null 2>&1; then
+            dtoverlay -d "$BOOT_DIR/overlays" argon-oneup-lid 2>/dev/null || dtoverlay argon-oneup-lid 2>/dev/null || true
+        fi
+        udevadm settle 2>/dev/null || true
+        udevadm trigger --subsystem-match=input --action=add 2>/dev/null || true
     fi
 fi
 

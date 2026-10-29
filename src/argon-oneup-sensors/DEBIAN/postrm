@@ -2,6 +2,25 @@
 set -e
 
 if [ "$1" = "remove" ] || [ "$1" = "purge" ]; then
+    ORIG="/var/lib/argon-oneup-sensors/ksystemstats_plugin_cpu.so.orig"
+    TARGET="/usr/lib/aarch64-linux-gnu/qt6/plugins/ksystemstats/ksystemstats_plugin_cpu.so"
+    if [ -f "$ORIG" ] && [ -f "$TARGET" ]; then
+        cp -pf "$ORIG" "${TARGET}.restore.tmp" 2>/dev/null && mv -f "${TARGET}.restore.tmp" "$TARGET" 2>/dev/null || true
+    fi
+    rm -rf /var/lib/argon-oneup-sensors 2>/dev/null || true
+
+    for uid_dir in /run/user/[0-9]*; do
+        if [ -d "$uid_dir" ]; then
+            uid=$(basename "$uid_dir")
+            sudo -u "#$uid" XDG_RUNTIME_DIR="$uid_dir" DBUS_SESSION_BUS_ADDRESS="unix:path=${uid_dir}/bus" \
+                systemctl --user daemon-reload 2>/dev/null || true
+            sudo -u "#$uid" XDG_RUNTIME_DIR="$uid_dir" DBUS_SESSION_BUS_ADDRESS="unix:path=${uid_dir}/bus" \
+                systemctl --user try-restart plasma-ksystemstats.service 2>/dev/null || true
+        fi
+    done
+fi
+
+if [ "$1" = "purge" ]; then
     rm -f /etc/sensors.d/argon-oneup.conf
     rm -rf /etc/systemd/user/plasma-ksystemstats.service.d
     rm -f /etc/apt/apt.conf.d/99-ksystemstats-rpi5-fix

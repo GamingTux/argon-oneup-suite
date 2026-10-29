@@ -11,6 +11,7 @@ Description: Hardware tuning, antenna/NVMe/USB setup & performance optimizations
  Argon ONE UP laptop (Raspberry Pi Compute Module 5 / Pi 5):
   - External display-lid Wi-Fi/BT antenna selection (dtparam=ant2)
   - M.2 NVMe PCIe Gen 3 full-speed mode (dtparam=nvme, pciex1_gen=3)
-  - Internal USB 2.0 Host bus & 1.6A USB current limit (dwc2 dr_mode=host, usb_max_current_enable=1)
+  - Internal USB 2.0 Host bus & 5A/1.6A USB power profile (dwc2, PSU_MAX_CURRENT=5000)
+  - BCM2712 SDRAM 8-bank hardware interleaving (SDRAM_BANKLOW=1) & PMIC halt power-off
   - 2.8 GHz CPU boost (arm_freq=2800) & 4-stage quiet blower fan curve with 5C hysteresis
-  - TCP BBR congestion control, zstd ZRAM tuning, I/O scheduler rules & flash-wear protection
+  - Multi-core GICv2 Level-IRQ spreading, schedutil 1ms governor, lz4 ZRAM & TCP BBR

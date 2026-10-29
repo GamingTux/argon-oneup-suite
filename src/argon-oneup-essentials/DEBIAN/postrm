@@ -8,10 +8,22 @@ if [ "$1" = "remove" ] || [ "$1" = "purge" ]; then
         fi
     done
     rm -f /boot/firmware/overlays/cm5-disable-ethernet.dtbo /boot/overlays/cm5-disable-ethernet.dtbo 2>/dev/null || true
-    if [ "$1" = "purge" ]; then
+    if [ -L /etc/systemd/zram-generator.conf.d/20-rpi-swap-zram0-ctrl.conf ]; then
         rm -f /etc/systemd/zram-generator.conf.d/20-rpi-swap-zram0-ctrl.conf 2>/dev/null || true
+    fi
+    if [ -L /etc/systemd/system/NetworkManager-wait-online.service ]; then
         rm -f /etc/systemd/system/NetworkManager-wait-online.service 2>/dev/null || true
+    fi
+    if [ -L /etc/systemd/system/systemd-networkd-wait-online.service ]; then
         rm -f /etc/systemd/system/systemd-networkd-wait-online.service 2>/dev/null || true
+    fi
+    if [ -f /etc/xdg/labwc/rc.xml ] && grep -q "argon-brightness-step" /etc/xdg/labwc/rc.xml; then
+        sed -i '/<keybind key="XF86MonBrightnessUp">/,/<\/keybind>/d; /<keybind key="XF86MonBrightnessDown">/,/<\/keybind>/d' /etc/xdg/labwc/rc.xml 2>/dev/null || true
+        pkill -HUP labwc 2>/dev/null || true
+    fi
+    if [ -f /etc/default/irqbalance ] && grep -q "argon-oneup-irq-policy" /etc/default/irqbalance; then
+        sed -i '/argon-oneup-irq-policy/d' /etc/default/irqbalance 2>/dev/null || true
+        systemctl try-restart irqbalance.service 2>/dev/null || true
     fi
 fi
 

@@ -10,11 +10,13 @@ loss protection, and instant wake-up via standard Linux input events.
 
 import os
 import sys
+import pwd
 import glob
 import time
 import signal
 import select
 import struct
+import syslog
 import fcntl
 import subprocess
 
@@ -72,9 +74,13 @@ def load_config():
 
 def log(msg):
     try:
-        subprocess.run(["logger", "-t", "rpi-fake-sleep", msg], check=False)
+        syslog.openlog("rpi-fake-sleep")
+        syslog.syslog(syslog.LOG_INFO, str(msg))
     except Exception:
-        pass
+        try:
+            subprocess.run(["logger", "-t", "rpi-fake-sleep", str(msg)], timeout=2, check=False)
+        except Exception:
+            pass
 
 _cached_lid_dev = None
 
@@ -84,34 +90,53 @@ def get_lid_device_path():
     if _cached_lid_dev and os.path.exists(_cached_lid_dev):
         return _cached_lid_dev
     for dev in sorted(glob.glob("/dev/input/event*")):
+        fd = -1
         try:
             fd = os.open(dev, os.O_RDONLY | os.O_NONBLOCK)
             buf = bytearray(256)
             fcntl.ioctl(fd, EVIOCGNAME_256, buf)
             name = buf.split(b'\x00')[0].decode('utf-8', errors='ignore')
-            os.close(fd)
             if "lid" in name.lower():
                 _cached_lid_dev = dev
                 return dev
         except Exception:
             pass
+        finally:
+            if fd >= 0:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
     return None
 
-def get_lid_state():
+def get_lid_state(lid_fd=None):
     """Returns 'closed', 'open', or 'none' if no lid switch exists."""
     global _cached_lid_dev
+    if lid_fd is not None and lid_fd >= 0:
+        try:
+            sw = bytearray(4)
+            fcntl.ioctl(lid_fd, EVIOCGSW_4, sw)
+            return "closed" if (sw[0] & 1) else "open"
+        except Exception:
+            pass
     dev = get_lid_device_path()
     if not dev:
         return "none"
+    fd = -1
     try:
         fd = os.open(dev, os.O_RDONLY | os.O_NONBLOCK)
         sw = bytearray(4)
         fcntl.ioctl(fd, EVIOCGSW_4, sw)
-        os.close(fd)
         return "closed" if (sw[0] & 1) else "open"
     except Exception:
         _cached_lid_dev = None
         return "none"
+    finally:
+        if fd >= 0:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
 
 def read_battery_soc():
     """Reads current battery capacity in percent, or None if no battery exists."""
@@ -154,7 +179,7 @@ def get_wifi_power_save() -> bool:
     for iw in ["/usr/sbin/iw", "/usr/bin/iw", "iw"]:
         try:
             res = subprocess.run([iw, "dev", "wlan0", "get", "power_save"],
-                                 capture_output=True, text=True, check=False)
+                                 capture_output=True, text=True, timeout=3, check=False)
             if res.returncode == 0:
                 return "power save: on" in res.stdout.lower()
         except Exception:
@@ -166,7 +191,7 @@ def set_wifi_power_save(enable: bool):
     for iw in ["/usr/sbin/iw", "/usr/bin/iw", "iw"]:
         try:
             subprocess.run([iw, "dev", "wlan0", "set", "power_save", "on" if enable else "off"],
-                           check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                           timeout=3, check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             break
         except Exception:
             pass
@@ -175,7 +200,7 @@ def get_bluetooth_blocked():
     """Checks if bluetooth is currently soft-blocked."""
     for rf in ["/usr/sbin/rfkill", "/usr/bin/rfkill", "rfkill"]:
         try:
-            res = subprocess.run([rf, "list", "bluetooth"], capture_output=True, text=True, check=False)
+            res = subprocess.run([rf, "list", "bluetooth"], capture_output=True, text=True, timeout=3, check=False)
             if res.returncode == 0:
                 return "soft blocked: yes" in res.stdout.lower()
         except Exception:
@@ -188,7 +213,7 @@ def set_bluetooth_power(enable: bool):
         try:
             action = "unblock" if enable else "block"
             subprocess.run([rf, action, "bluetooth"],
-                           check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                           timeout=3, check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             break
         except Exception:
             pass
@@ -348,7 +373,7 @@ def sync_external_hdmi_hotplug():
             try:
                 with open(st_path, "r") as f:
                     drm_connected = (f.read().strip() == "connected")
-                if hw_connected is None or hw_connected != drm_connected:
+                if hw_connected is not None and hw_connected != drm_connected:
                     with open(st_path, "w") as f:
                         f.write("detect")
             except Exception:
@@ -439,7 +464,7 @@ def get_audio_mute_state():
     """Returns saved mute states for ALSA Master and active pipewire user sessions."""
     state = {"amixer_muted": False, "pipewire_muted": {}}
     try:
-        res = subprocess.run(["amixer", "get", "Master"], capture_output=True, text=True, check=False)
+        res = subprocess.run(["amixer", "get", "Master"], capture_output=True, text=True, timeout=2, check=False)
         if res.returncode == 0 and "[off]" in res.stdout:
             state["amixer_muted"] = True
     except Exception:
@@ -451,7 +476,7 @@ def get_audio_mute_state():
             res = subprocess.run(
                 ["sudo", "-u", f"#{uid}", "env", f"XDG_RUNTIME_DIR=/run/user/{uid}",
                  "wpctl", "get-volume", "@DEFAULT_AUDIO_SINK@"],
-                capture_output=True, text=True, check=False
+                capture_output=True, text=True, timeout=2, check=False
             )
             if res.returncode == 0 and "[MUTED]" in res.stdout:
                 state["pipewire_muted"][uid] = True
@@ -463,7 +488,7 @@ def get_audio_mute_state():
 
 def mute_audio():
     try:
-        subprocess.run(["amixer", "set", "Master", "mute"], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.run(["amixer", "set", "Master", "mute"], timeout=2, check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except Exception:
         pass
     for pw in glob.glob("/run/user/*/pipewire-0"):
@@ -472,13 +497,22 @@ def mute_audio():
             subprocess.run(
                 ["sudo", "-u", f"#{uid}", "env", f"XDG_RUNTIME_DIR=/run/user/{uid}",
                  "wpctl", "set-mute", "@DEFAULT_AUDIO_SINK@", "1"],
-                check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+                timeout=2, check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
             )
         except Exception:
             pass
 
 def restore_audio(saved_audio_state):
-    """Restores audio HID interface and unmutes audio only if it was not originally muted before sleep."""
+    """Restores audio HID interface, runtime autosuspend delay (2000ms), and unmutes audio if not originally muted."""
+    for audio_intf in glob.glob("/sys/bus/usb/drivers/snd-usb-audio/*:*"):
+        try:
+            usb_dev = os.path.realpath(os.path.join(audio_intf, ".."))
+            p = os.path.join(usb_dev, "power/autosuspend_delay_ms")
+            if os.path.isfile(p):
+                with open(p, "w") as f:
+                    f.write("2000")
+        except Exception:
+            pass
     if os.path.exists("/sys/bus/usb/devices/1-1.1/1-1.1:1.3") and not os.path.exists("/sys/bus/usb/drivers/usbhid/1-1.1:1.3"):
         try:
             with open("/sys/bus/usb/drivers/usbhid/bind", "w") as f:
@@ -494,13 +528,13 @@ def restore_audio(saved_audio_state):
                 subprocess.run(
                     ["sudo", "-u", f"#{uid}", "env", f"XDG_RUNTIME_DIR=/run/user/{uid}",
                      "wpctl", "set-mute", "@DEFAULT_AUDIO_SINK@", "0"],
-                    check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+                    timeout=2, check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
                 )
         except Exception:
             pass
     if not saved_audio_state.get("amixer_muted", False):
         try:
-            subprocess.run(["amixer", "set", "Master", "unmute"], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.run(["amixer", "set", "Master", "unmute"], timeout=2, check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         except Exception:
             pass
 
@@ -558,10 +592,13 @@ def blank_displays():
                 disp = ":" + os.path.basename(xsock)[1:]
                 for bus in glob.glob("/run/user/*/bus"):
                     uid = bus.split("/")[3]
-                    pw = os.path.expanduser(f"~#{uid}")
+                    try:
+                        user_home = pwd.getpwuid(int(uid)).pw_dir
+                    except Exception:
+                        user_home = "/root"
                     xauth = f"/run/user/{uid}/gdm/Xauthority"
                     if not os.path.isfile(xauth):
-                        xauth = os.path.join(f"/home/{os.listdir('/home')[0]}" if os.path.isdir("/home") and os.listdir("/home") else "/root", ".Xauthority")
+                        xauth = os.path.join(user_home, ".Xauthority")
                     subprocess.run(
                         ["sudo", "-u", f"#{uid}", "env", f"DISPLAY={disp}", f"XAUTHORITY={xauth}",
                          "xset", "dpms", "force", "off"],
@@ -608,9 +645,13 @@ def restore_displays(saved_brightness):
                 disp = ":" + os.path.basename(xsock)[1:]
                 for bus in glob.glob("/run/user/*/bus"):
                     uid = bus.split("/")[3]
+                    try:
+                        user_home = pwd.getpwuid(int(uid)).pw_dir
+                    except Exception:
+                        user_home = "/root"
                     xauth = f"/run/user/{uid}/gdm/Xauthority"
                     if not os.path.isfile(xauth):
-                        xauth = os.path.join(f"/home/{os.listdir('/home')[0]}" if os.path.isdir("/home") and os.listdir("/home") else "/root", ".Xauthority")
+                        xauth = os.path.join(user_home, ".Xauthority")
                     subprocess.run(
                         ["sudo", "-u", f"#{uid}", "env", f"DISPLAY={disp}", f"XAUTHORITY={xauth}",
                          "xset", "dpms", "force", "on"],
@@ -667,7 +708,7 @@ def apply_power_saving():
         maxinfo_path = os.path.join(real_policy, "cpuinfo_max_freq")
         if os.path.isfile(gov_path):
             try:
-                gov = "ondemand"
+                gov = "schedutil"
                 with open(gov_path, "r") as f:
                     gov = f.read().strip()
                 min_freq = None
@@ -691,11 +732,39 @@ def apply_power_saving():
             except Exception:
                 pass
 
-    # 3. Single-Core WFI Parking (Pin all cgroup slices & kernel workqueues to CPU0)
+    wq_pe_path = "/sys/module/workqueue/parameters/power_efficient"
+    if os.path.isfile(wq_pe_path):
+        try:
+            with open(wq_pe_path, "r") as f:
+                saved_cpu_state["__wq_power_efficient__"] = f.read().strip()
+        except Exception:
+            pass
+
+    # 3. Single-Core WFI Parking (Pin all cgroup slices, kernel workqueues & hardware IRQs to CPU0)
     # Note: On BCM2712 (RPi 5 / CM5), armstub8-2712.bin implements PSCI_CPU_OFF but lacks
     # PSCI_CPU_ON (offlined cores cannot come back online without a reboot).
-    # Instead, we pin cgroups v2 slices and unbound kernel workqueues to CPU0 so
-    # CPU1..CPU3 remain permanently in hardware WFI (0 MHz) during standby and resume in <1ms.
+    # Instead, we pin cgroups v2 slices, unbound kernel workqueues, and GICv2 Level IRQs to CPU0
+    # so CPU1..CPU3 remain permanently in hardware WFI (0 MHz) during standby and resume in <1ms.
+    saved_irqs = {}
+    for irq_dir in glob.glob("/proc/irq/[0-9]*"):
+        aff_file = os.path.join(irq_dir, "smp_affinity_list")
+        if not os.path.isfile(aff_file):
+            continue
+        for entry in glob.glob(os.path.join(irq_dir, "*")):
+            if not os.path.isdir(entry):
+                continue
+            name = os.path.basename(entry)
+            if any(k in name for k in ("dwc2", "v3d", "vc4", "hvs", "mmc0", "mmc1", "rp1", "xhci")):
+                try:
+                    with open(aff_file, "r") as f:
+                        saved_irqs[aff_file] = f.read().strip()
+                    with open(aff_file, "w") as f:
+                        f.write("0")
+                except Exception:
+                    pass
+                break
+    saved_cpu_state["__irq_affinities__"] = saved_irqs
+
     try:
         if os.path.isfile("/sys/fs/cgroup/cgroup.subtree_control"):
             with open("/sys/fs/cgroup/cgroup.subtree_control", "w") as f:
@@ -715,8 +784,8 @@ def apply_power_saving():
     return saved_cpu_state
 
 def restore_power(saved_cpu_state):
-    """Unfreezes applications and restores normal CPU clock."""
-    # 0. Restore Multi-Core CPU0..3 scheduling & kernel workqueue affinity
+    """Unfreezes applications and restores normal CPU clock and multi-core IRQ spreading."""
+    # 0. Restore Multi-Core CPU0..3 scheduling, kernel workqueue affinity & GICv2 IRQ spreading
     try:
         all_cpus = "0-3"
         if os.path.isfile("/sys/devices/system/cpu/present"):
@@ -733,6 +802,25 @@ def restore_power(saved_cpu_state):
         os.sched_setaffinity(0, {0, 1, 2, 3})
     except Exception:
         pass
+
+    if isinstance(saved_cpu_state, dict) and "__irq_affinities__" in saved_cpu_state:
+        for aff_file, prev_aff in saved_cpu_state["__irq_affinities__"].items():
+            try:
+                if os.path.isfile(aff_file) and prev_aff:
+                    with open(aff_file, "w") as f:
+                        f.write(prev_aff)
+            except Exception:
+                pass
+
+    if isinstance(saved_cpu_state, dict) and "__wq_power_efficient__" in saved_cpu_state:
+        wq_pe_path = "/sys/module/workqueue/parameters/power_efficient"
+        prev_wq = saved_cpu_state["__wq_power_efficient__"]
+        if os.path.isfile(wq_pe_path) and prev_wq in ("Y", "N", "1", "0"):
+            try:
+                with open(wq_pe_path, "w") as f:
+                    f.write(prev_wq)
+            except Exception:
+                pass
 
     # 1. Unfreeze cgroups v2 user apps
     for uid_dir in glob.glob("/sys/fs/cgroup/user.slice/user-*.slice/user@*.service/app.slice"):
@@ -761,10 +849,10 @@ def restore_power(saved_cpu_state):
             if isinstance(saved_cpu_state, dict):
                 state = saved_cpu_state.get(real_policy) or saved_cpu_state.get(cpu) or {}
             if isinstance(state, dict):
-                gov = state.get("gov", "ondemand")
+                gov = state.get("gov", "schedutil")
                 top_freq = state.get("max_freq")
             else:
-                gov = saved_cpu_state.get(gov_path, "ondemand") if isinstance(saved_cpu_state, dict) else "ondemand"
+                gov = saved_cpu_state.get(gov_path, "schedutil") if isinstance(saved_cpu_state, dict) else "schedutil"
                 top_freq = None
 
             min_freq = None
@@ -1053,15 +1141,19 @@ def main():
         log(f"Powering off internal keyboard in sleep (mode: {kbd_mode}, lid: {initial_lid})")
         set_keyboard_backlight_power(enable=False)
 
-    # 7. Open input devices and wait via epoll (0% CPU)
+    # 7. Open input devices and wait via epoll (0% CPU, <1ms interrupt wake)
     epoll = select.epoll()
     open_fds = []
+    lid_dev_path = get_lid_device_path()
+    lid_fd = None
 
     for dev in glob.glob("/dev/input/event*"):
         try:
             fd = os.open(dev, os.O_RDONLY | os.O_NONBLOCK)
             epoll.register(fd, select.EPOLLIN)
             open_fds.append(fd)
+            if dev == lid_dev_path:
+                lid_fd = fd
         except Exception:
             pass
 
@@ -1071,11 +1163,11 @@ def main():
 
     try:
         while True:
-            # Poll every 0.25s for instant responsiveness
-            events = epoll.poll(timeout=0.25)
+            # Wait via kernel epoll (<1ms interrupt wake on EV_SW/EV_KEY, 2.0s watchdog tick)
+            events = epoll.poll(timeout=2.0)
 
-            # Check if lid state transitioned to open (fast 1s poll check)
-            if lid_was_closed and get_lid_state() == "open":
+            # Fallback check if lid state transitioned to open (reuses open lid_fd)
+            if lid_was_closed and get_lid_state(lid_fd) == "open":
                 log("Lid opened (poll check) -> waking up")
                 break
 

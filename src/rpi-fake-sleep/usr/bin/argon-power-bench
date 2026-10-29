@@ -18,12 +18,13 @@ from datetime import datetime
 
 BAT_PATH = "/sys/class/power_supply/BAT0"
 AC_PATH = "/sys/class/power_supply/AC0"
-BL_PATH = "/sys/class/backlight/ddcci14"
+_bl_candidates = sorted(glob.glob("/sys/class/backlight/*"))
+BL_PATH = _bl_candidates[0] if _bl_candidates else "/sys/class/backlight/ddcci14"
 CSV_LOG = "/var/log/argon-power-benchmark.csv"
 REPORT_FILE = "/var/log/argon-power-report.md"
 
 CELLS_IN_SERIES = 3
-PACK_WH = 55.21
+PACK_WH = 53.28
 
 def read_file(path, default=None):
     try:
@@ -45,8 +46,8 @@ def set_cpufreq_governor(gov):
         try:
             avail = (read_file(os.path.join(real_p, "scaling_available_governors")) or "").split()
             actual_gov = gov
-            if gov == "ondemand" and avail and "ondemand" not in avail:
-                actual_gov = "schedutil" if "schedutil" in avail else avail[0]
+            if gov in ("schedutil", "ondemand") and avail and gov not in avail:
+                actual_gov = "schedutil" if "schedutil" in avail else ("ondemand" if "ondemand" in avail else avail[0])
             maxinfo = read_file(os.path.join(real_p, "cpuinfo_max_freq"))
             mininfo = read_file(os.path.join(real_p, "cpuinfo_min_freq"))
             if actual_gov == "powersave" and mininfo:
@@ -331,8 +332,10 @@ def run_benchmark(duration=60):
     print("\n--- PHASE 2: VOLLLAST (CPU 100% - 4 KERNE @ 2.8 GHz) ---")
     print("Starte 4-Kern stress-ng (Matrix-Multiplikation + RAM-Stress)...")
 
-    # Ensure ondemand governor
-    set_cpufreq_governor("ondemand")
+    orig_gov = read_file("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor", "schedutil")
+
+    # Ensure dynamic governor for FullLoad test
+    set_cpufreq_governor("schedutil")
 
     stress_proc = subprocess.Popen(
         ["stress-ng", "--cpu", "4", "--cpu-method", "matrixprod", "--vm", "2", "--vm-bytes", "512M", "--timeout", f"{duration+6}s"],
@@ -432,7 +435,7 @@ def run_benchmark(duration=60):
         if os.path.isfile(f"{BL_PATH}/brightness"):
             with open(f"{BL_PATH}/brightness", "w") as f:
                 f.write(orig_brightness)
-        set_cpufreq_governor("ondemand")
+        set_cpufreq_governor(orig_gov)
 
     # -------------------------------------------------------------
     # AUSWERTUNG & BERICHT

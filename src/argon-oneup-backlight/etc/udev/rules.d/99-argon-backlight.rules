@@ -1,3 +1,2 @@
-ACTION=="add", SUBSYSTEM=="i2c-dev", KERNEL=="i2c-14", RUN+="/usr/sbin/argon-backlight-init"
-ACTION=="add", SUBSYSTEM=="i2c", KERNEL=="i2c-14", RUN+="/usr/sbin/argon-backlight-init"
-SUBSYSTEM=="i2c-dev", KERNEL=="i2c-[0-9]*", GROUP="i2c", MODE="0660"
+ACTION=="add", SUBSYSTEM=="drm", KERNEL=="card*-HDMI-A-2", TAG+="systemd", ENV{SYSTEMD_WANTS}+="argon-backlight.service"
+ACTION=="add", SUBSYSTEM=="backlight", RUN+="/bin/chgrp video /sys/class/backlight/%k/brightness", RUN+="/bin/chmod 0664 /sys/class/backlight/%k/brightness"

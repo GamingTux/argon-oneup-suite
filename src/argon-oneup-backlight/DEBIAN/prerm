@@ -1,4 +1,8 @@
 #!/bin/bash
 set -e
 systemctl disable --now argon-backlight.service 2>/dev/null || true
+/usr/sbin/argon-backlight-init stop 2>/dev/null || true
+if [ "$1" = "remove" ] || [ "$1" = "purge" ]; then
+    modprobe -r ddcci_backlight ddcci 2>/dev/null || true
+fi
 exit 0

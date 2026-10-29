@@ -1,6 +1,12 @@
-# Optimal I/O Scheduler & Read-Ahead for NVMe SSDs and eMMC/SD storage
-ACTION=="add|change", KERNEL=="nvme[0-9]*n[0-9]*", ATTR{queue/scheduler}="none", ATTR{queue/read_ahead_kb}="256"
-ACTION=="add|change", KERNEL=="mmcblk[0-9]*", ATTR{queue/scheduler}="mq-deadline", ATTR{queue/read_ahead_kb}="256"
+# Optimal I/O Scheduler, Read-Ahead & Core Queue Affinity for NVMe SSDs and eMMC/SD/USB storage
+ACTION=="add|change", KERNEL=="nvme[0-9]*n[0-9]*", ATTR{queue/scheduler}="none", ATTR{queue/read_ahead_kb}="512", ATTR{queue/rq_affinity}="2"
+ACTION=="add|change", KERNEL=="mmcblk[0-9]*|sd[a-z]", ATTR{queue/scheduler}="mq-deadline", ATTR{queue/read_ahead_kb}="256", ATTR{queue/rq_affinity}="2"
+
+# 4-Core Receive Packet Steering (RPS/RFS) on network interfaces
+ACTION=="add", SUBSYSTEM=="net", KERNEL=="wlan*|eth*", ATTR{queues/rx-0/rps_cpus}="f", ATTR{queues/rx-0/rps_flow_cnt}="4096"
 
 # Put unpopulated CM5 Gigabit Ethernet PHY (BCM54213PE) into MDIO BMCR_PDOWN hardware suspend
-ACTION=="add", SUBSYSTEM=="net", KERNEL=="eth0", RUN+="/sbin/ip link set dev eth0 down"
+ACTION=="add", SUBSYSTEM=="net", KERNEL=="eth0", RUN+="/bin/sh -c '. /etc/argon-oneup-essentials.conf 2>/dev/null || true; [ \"${DISABLE_UNUSED_ETHERNET:-1}\" = \"1\" ] && /sbin/ip link set dev eth0 down || true'"
+
+# Apply multi-core GICv2 IRQ affinity spreading and CPU governor tuning on boot
+ACTION=="add", SUBSYSTEM=="drm", KERNEL=="card0", RUN+="/usr/sbin/argon-essentials-apply --runtime"

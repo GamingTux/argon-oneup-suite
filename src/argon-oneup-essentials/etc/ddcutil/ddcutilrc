@@ -1,2 +1,0 @@
-[global]
-options: --disable-dynamic-sleep --sleep-multiplier 0.1 --disable-heuristic-unsupported

@@ -102,7 +102,7 @@ class PiShutdownWindow(Gtk.Window):
         box.pack_start(btn_reboot, False, True, 0)
 
         # 4. Logout / Exit
-        is_dm_active = subprocess.run("systemctl is-active lightdm 2>/dev/null | grep -qw active", shell=True).returncode == 0
+        is_dm_active = subprocess.run(["systemctl", "is-active", "--quiet", "lightdm"], check=False).returncode == 0
         logout_label = self.t["logout"] if is_dm_active else self.t["logout_cli"]
         btn_logout = Gtk.Button(label=logout_label)
         btn_logout.set_can_focus(True)
@@ -132,21 +132,25 @@ class PiShutdownWindow(Gtk.Window):
 
     def on_shutdown(self, btn):
         self.hide()
-        subprocess.run("/usr/bin/pkill orca 2>/dev/null; /sbin/shutdown -h now", shell=True)
+        subprocess.run(["/usr/bin/pkill", "orca"], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if subprocess.run(["systemctl", "poweroff"], check=False).returncode != 0:
+            subprocess.run(["/sbin/shutdown", "-h", "now"], check=False)
         Gtk.main_quit()
 
     def on_reboot(self, btn):
         self.hide()
-        subprocess.run("/usr/bin/pkill orca 2>/dev/null; /sbin/reboot", shell=True)
+        subprocess.run(["/usr/bin/pkill", "orca"], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if subprocess.run(["systemctl", "reboot"], check=False).returncode != 0:
+            subprocess.run(["/sbin/reboot"], check=False)
         Gtk.main_quit()
 
     def on_logout(self, btn):
         self.hide()
-        subprocess.run(
-            "/usr/bin/pkill orca 2>/dev/null; "
-            "if pgrep labwc >/dev/null; then /usr/bin/labwc -e; else /usr/bin/pkill lxsession; fi",
-            shell=True
-        )
+        subprocess.run(["/usr/bin/pkill", "orca"], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if subprocess.run(["/usr/bin/pgrep", "-x", "labwc"], check=False, stdout=subprocess.DEVNULL).returncode == 0:
+            subprocess.run(["/usr/bin/labwc", "-e"], check=False)
+        else:
+            subprocess.run(["/usr/bin/pkill", "lxsession"], check=False)
         Gtk.main_quit()
 
 def main():

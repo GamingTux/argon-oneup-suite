@@ -2,9 +2,12 @@
 set -e
 
 if [ "$1" = "purge" ] || [ "$1" = "remove" ]; then
+    if [ -d /sys/kernel/config/device-tree/overlays/argon-oneup-battery ] && command -v dtoverlay >/dev/null 2>&1; then
+        dtoverlay -r argon-oneup-battery 2>/dev/null || true
+    fi
     for d in /boot/firmware /boot; do
         rm -f "$d/overlays/argon-oneup-battery.dtbo" 2>/dev/null || true
-        if [ -f "$d/config.txt" ]; then
+        if [ -f "$d/config.txt" ] && grep -q "^[[:space:]]*dtoverlay=argon-oneup-battery" "$d/config.txt"; then
             sed -i '/^[[:space:]]*dtoverlay=argon-oneup-battery/d' "$d/config.txt" 2>/dev/null || true
             echo "[argon-oneup-battery] Removed dtoverlay=argon-oneup-battery from $d/config.txt"
         fi

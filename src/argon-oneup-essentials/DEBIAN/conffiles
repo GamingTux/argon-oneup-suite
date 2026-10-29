@@ -1,5 +1,5 @@
 /etc/argon-oneup-essentials.conf
-/etc/sysctl.d/90-argon-oneup-essentials.conf
+/etc/sysctl.d/99-z-argon-oneup-essentials.conf
 /etc/modules-load.d/argon-bbr.conf
 /etc/systemd/zram-generator.conf.d/90-argon-oneup.conf
 /etc/systemd/journald.conf.d/90-argon-oneup.conf
@@ -19,6 +19,5 @@
 /etc/xdg/kcminputrc
 /etc/xdg/kdeglobals
 /etc/xdg/ddcutil/ddcutilrc
-/etc/ddcutil/ddcutilrc
 /etc/systemd/system/fstrim.timer.d/acpower.conf
 /etc/profile.d/cm5-cortex-a76.sh

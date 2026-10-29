@@ -16,6 +16,10 @@ if [ -n "$BOOT_DIR" ]; then
     CONFIG="$BOOT_DIR/config.txt"
     if [ -f "$CONFIG" ]; then
         if ! grep -q "^[[:space:]]*dtoverlay=cm5-sdcard-fast" "$CONFIG"; then
+            LAST_SEC=$(grep -E '^[[:space:]]*\[[^]]+\]' "$CONFIG" | tail -n1 | tr -d '[:space:]' || true)
+            if [ -n "$LAST_SEC" ] && [ "$LAST_SEC" != "[all]" ]; then
+                printf '\n[all]\n' >> "$CONFIG"
+            fi
             echo "dtoverlay=cm5-sdcard-fast" >> "$CONFIG"
             echo "[cm5-mmc-fix] Enabled dtoverlay=cm5-sdcard-fast in $CONFIG"
         fi

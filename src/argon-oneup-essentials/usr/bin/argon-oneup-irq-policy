@@ -1,0 +1,23 @@
+#!/bin/sh
+# irqbalance policy script for Argon ONE UP (Raspberry Pi CM5 / BCM2712 GICv2)
+# Prevents irqbalance from resetting manually spread Level IRQs back onto CPU0,
+# while balancing Edge/MSI-X interrupts (e.g. NVMe queues) at individual core level.
+
+IRQ_PATH="$1"
+IRQ_NUM="$2"
+
+if [ -n "$IRQ_NUM" ] && [ -d "/proc/irq/$IRQ_NUM" ]; then
+    for action_dir in /proc/irq/"$IRQ_NUM"/*; do
+        [ -d "$action_dir" ] || continue
+        name=$(basename "$action_dir")
+        case "$name" in
+            *dwc2*|*v3d*|*vc4*|*hvs*|*mmc0*|*mmc1*|*rp1*|*xhci*)
+                echo "ban=true"
+                exit 0
+                ;;
+        esac
+    done
+fi
+
+echo "balance_level=core"
+exit 0

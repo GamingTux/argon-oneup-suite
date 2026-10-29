@@ -1,11 +1,12 @@
 Package: argon-oneup-lid
-Version: 1.1.0
+Version: 1.2.5
 Architecture: all
 Maintainer: GamingTux <gamingtux@users.noreply.github.com>
+Recommends: raspi-utils-dt | raspberrypi-utils
 Section: hardware
 Priority: optional
 Homepage: https://github.com/GamingTux/argon-oneup-suite
 Description: Argon ONE UP Laptop Hardware Lid Switch Integration
  Integrates the physical Hall-effect magnetic lid switch on GPIO 27
  into the standard Linux input subsystem (EV_SW, SW_LID) via a Device Tree Overlay.
- Automatically configures config.txt to enable the overlay at boot.
+ Automatically configures config.txt and activates the overlay at runtime.

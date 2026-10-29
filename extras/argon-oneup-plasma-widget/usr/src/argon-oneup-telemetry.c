@@ -311,7 +311,7 @@ static void collect_telemetry(Telemetry *t) {
 
     // 1. CPU Cores, Load & Governor
     t->max_mhz = (int)(read_int("/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq", 2400000) / 1000);
-    char path[128];
+    char path[320];
     for (int i = 0; i < 4; i++) {
         snprintf(path, sizeof(path), "/sys/devices/system/cpu/cpu%d/cpufreq/scaling_cur_freq", i);
         long val = read_int(path, 0);
@@ -319,7 +319,7 @@ static void collect_telemetry(Telemetry *t) {
     }
     get_cpu_loads(t);
     t->cpu_temp_c = read_int("/sys/class/thermal/thermal_zone0/temp", 0) / 1000.0f;
-    read_str("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor", t->governor, sizeof(t->governor), "ondemand");
+    read_str("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor", t->governor, sizeof(t->governor), "schedutil");
 
     // 2. GPU Load & Clock (V3D)
     t->gpu_percent = get_gpu_load();
@@ -332,7 +332,7 @@ static void collect_telemetry(Telemetry *t) {
         struct dirent *de;
         while ((de = readdir(dir)) != NULL) {
             if (de->d_name[0] == '.') continue;
-            char npath[128], name[64];
+            char npath[320], name[64];
             snprintf(npath, sizeof(npath), "/sys/class/hwmon/%s/name", de->d_name);
             read_str(npath, name, sizeof(name), "");
             if (strcmp(name, "pwmfan") == 0) {

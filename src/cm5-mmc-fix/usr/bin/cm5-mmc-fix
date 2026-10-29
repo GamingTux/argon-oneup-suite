@@ -27,32 +27,39 @@ def find_kernels():
 
 def read_kernel_raw(path):
     try:
-        with gzip.open(path, "rb") as f:
-            return f.read(), True
-    except Exception:
-        pass
-    try:
         with open(path, "rb") as f:
-            return f.read(), False
+            raw = f.read()
+        if raw[:2] == b"\x1f\x8b":
+            return gzip.decompress(raw), True
+        return raw, False
     except Exception:
         return None, False
 
 def write_kernel_raw(path, data, is_gzipped):
     dir_name = os.path.dirname(path)
     fd, tmp = tempfile.mkstemp(dir=dir_name, prefix=".kpatch-")
-    os.close(fd)
     try:
-        if is_gzipped:
-            with gzip.open(tmp, "wb", compresslevel=6) as f:
-                f.write(data)
-        else:
-            with open(tmp, "wb") as f:
-                f.write(data)
+        with os.fdopen(fd, "wb") as raw_fp:
+            if is_gzipped:
+                with gzip.GzipFile(filename="", mode="wb", fileobj=raw_fp, compresslevel=6, mtime=0) as gz_fp:
+                    gz_fp.write(data)
+            else:
+                raw_fp.write(data)
+            raw_fp.flush()
+            os.fsync(raw_fp.fileno())
         try:
             shutil.copymode(path, tmp)
         except OSError:
             pass
         os.replace(tmp, path)
+        try:
+            dir_fd = os.open(dir_name, os.O_RDONLY)
+            try:
+                os.fsync(dir_fd)
+            finally:
+                os.close(dir_fd)
+        except OSError:
+            pass
         return True
     except Exception as e:
         if os.path.exists(tmp):
@@ -66,7 +73,7 @@ def patch_kernel(path):
         return "READ_ERROR"
     if NEW_FREQS in data:
         return "ALREADY_PATCHED"
-    if OLD_FREQS in data:
+    if data.count(OLD_FREQS) == 1:
         patched = data.replace(OLD_FREQS, NEW_FREQS, 1)
         if write_kernel_raw(path, patched, is_gz):
             return "PATCHED"
@@ -79,7 +86,7 @@ def restore_kernel(path):
         return "READ_ERROR"
     if OLD_FREQS in data:
         return "ALREADY_ORIGINAL"
-    if NEW_FREQS in data:
+    if data.count(NEW_FREQS) == 1:
         restored = data.replace(NEW_FREQS, OLD_FREQS, 1)
         if write_kernel_raw(path, restored, is_gz):
             return "RESTORED"
