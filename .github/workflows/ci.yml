@@ -31,11 +31,11 @@ jobs:
 
           echo "=== Checking Shell syntax ==="
           bash -n build_packages.sh
-          find src extras -type f -name "postinst" -exec sh -n {} +
-          find src extras -type f -name "postrm" -exec sh -n {} +
-          find src extras -type f -name "prerm" -exec sh -n {} +
-          sh -n src/argon-oneup-backlight/usr/sbin/argon-backlight-init
-          sh -n src/argon-oneup-sensors/usr/bin/ksystemstats-cpuinfo-gen
+          find src extras -type f -name "postinst" -exec bash -n {} +
+          find src extras -type f -name "postrm" -exec bash -n {} +
+          find src extras -type f -name "prerm" -exec bash -n {} +
+          bash -n src/argon-oneup-backlight/usr/sbin/argon-backlight-init
+          bash -n src/argon-oneup-sensors/usr/bin/ksystemstats-cpuinfo-gen
           sh -n src/argon-oneup-essentials/usr/sbin/argon-essentials-apply
           sh -n src/argon-oneup-essentials/usr/bin/argon-oneup-irq-policy
           sh -n src/argon-oneup-essentials/usr/bin/argon-brightness-step
