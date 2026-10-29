@@ -179,10 +179,10 @@ battery *battery_update(battery *b)
         b->power_now = (gint)(((gint64)b->voltage_now * b->current_now + 500) / 1000);
     }
 
-    /* Read time_to_empty and time_to_full (reported in seconds in Linux sysfs) */
-    b->time_to_empty = get_raw_int_from_infofile(b, "time_to_empty_now", -1);
+    /* Read time_to_empty and time_to_full (prefer smoothed _avg when available) */
+    b->time_to_empty = get_raw_int_from_infofile(b, "time_to_empty_avg", -1);
     if (b->time_to_empty <= 0)
-        b->time_to_empty = get_raw_int_from_infofile(b, "time_to_empty_avg", -1);
+        b->time_to_empty = get_raw_int_from_infofile(b, "time_to_empty_now", -1);
 
     b->time_to_full = get_raw_int_from_infofile(b, "time_to_full_now", -1);
     if (b->time_to_full <= 0)
