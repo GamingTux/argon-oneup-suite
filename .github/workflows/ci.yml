@@ -28,9 +28,9 @@ jobs:
 
           echo "=== Checking Bash syntax ==="
           bash -n build_packages.sh
-          find src -type f -name "postinst" -exec bash -n {} +
-          find src -type f -name "postrm" -exec bash -n {} +
-          find src -type f -name "prerm" -exec bash -n {} +
+          find src extras -type f -name "postinst" -exec bash -n {} +
+          find src extras -type f -name "postrm" -exec bash -n {} +
+          find src extras -type f -name "prerm" -exec bash -n {} +
           bash -n src/argon-oneup-backlight/usr/sbin/argon-backlight-init
           bash -n src/argon-oneup-sensors/usr/bin/ksystemstats-cpuinfo-gen
 
@@ -43,7 +43,7 @@ jobs:
         run: |
           cd dist
           sha256sum -c SHA256SUMS
-          for deb in *.deb; do
+          for deb in *.deb extras/*.deb; do
             echo "--- $deb ---"
             dpkg-deb -I "$deb"
             dpkg-deb -c "$deb"
@@ -53,4 +53,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: argon-oneup-packages
-          path: dist/*.deb
+          path: |
+            dist/*.deb
+            dist/extras/*.deb

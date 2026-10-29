@@ -3,7 +3,7 @@ set -e
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SRC_DIR="${REPO_DIR}/src"
-EXTRAS_SRC_DIR="${SRC_DIR}/extras"
+EXTRAS_SRC_DIR="${REPO_DIR}/extras"
 DIST_DIR="${REPO_DIR}/dist"
 EXTRAS_DIST_DIR="${DIST_DIR}/extras"
 
@@ -11,9 +11,9 @@ mkdir -p "${DIST_DIR}" "${EXTRAS_DIST_DIR}"
 rm -f "${DIST_DIR}"/*.deb "${EXTRAS_DIST_DIR}"/*.deb
 
 echo "=== Cleaning temporary files ==="
-find "${SRC_DIR}" -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
-find "${SRC_DIR}" -type f -name "*.pyc" -delete 2>/dev/null || true
-find "${SRC_DIR}" -type f -name "*~" -delete 2>/dev/null || true
+find "${SRC_DIR}" "${EXTRAS_SRC_DIR}" -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
+find "${SRC_DIR}" "${EXTRAS_SRC_DIR}" -type f -name "*.pyc" -delete 2>/dev/null || true
+find "${SRC_DIR}" "${EXTRAS_SRC_DIR}" -type f -name "*~" -delete 2>/dev/null || true
 
 echo "=== Building Argon ONE UP Core Debian Packages ==="
 

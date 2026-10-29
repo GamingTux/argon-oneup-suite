@@ -7,8 +7,9 @@ Priority: optional
 Homepage: https://github.com/GamingTux/argon-oneup-suite
 Depends: python3, python3-gi, systemd
 Description: Universal Userspace Sleep & Standby Manager for Raspberry Pi
- Enables native Standby/Ruhezustand on Raspberry Pi systems where the kernel
- lacks ACPI S3 or stable s2idle support.
- Integrates with systemd-suspend and systemd-logind to handle lid switch,
- UI sleep button, and power saving (cgroups v2 freeze, CPU governor throttling,
- display blanking, and instant wakeup via input events).
+ Enables native low-power sleep and standby on Raspberry Pi 5 / CM5 systems
+ where the platform firmware lacks ACPI S3 or hardware s2idle support.
+ Integrates seamlessly with systemd-suspend and systemd-logind to handle lid
+ close events, desktop sleep actions, cgroups v2 process freezing, single-core
+ CPU parking (C1-C3 in hardware WFI), USB 2.0 host/audio autosuspend, and
+ instant <1ms wakeup via keyboard or lid switch.
