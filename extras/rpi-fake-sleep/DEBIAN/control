@@ -5,7 +5,9 @@ Maintainer: GamingTux <gamingtux@users.noreply.github.com>
 Section: admin
 Priority: optional
 Homepage: https://github.com/GamingTux/argon-oneup-suite
-Depends: python3, python3-gi, systemd
+Depends: python3, systemd
+Recommends: stress-ng
+Suggests: rpi-pishutdown
 Description: Universal Userspace Sleep & Standby Manager for Raspberry Pi
  Enables native low-power sleep and standby on Raspberry Pi 5 / CM5 systems
  where the platform firmware lacks ACPI S3 or hardware s2idle support.

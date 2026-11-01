@@ -142,6 +142,17 @@ def set_keyboard_power(enable: bool):
             pass
 
 def set_cgroups_frozen(freeze: bool):
+    if freeze:
+        # Ensure our own process (and parent sudo) is outside app.slice before freezing app.slice
+        for target_cg in ("/sys/fs/cgroup/init.scope/cgroup.procs", "/sys/fs/cgroup/cgroup.procs"):
+            if os.path.exists(target_cg):
+                for pid in (os.getppid(), os.getpid()):
+                    try:
+                        with open(target_cg, "w") as f:
+                            f.write(f"{pid}\n")
+                    except Exception:
+                        pass
+                break
     val = "1" if freeze else "0"
     for uid_dir in glob.glob("/sys/fs/cgroup/user.slice/user-*.slice/user@*.service/app.slice"):
         freeze_path = os.path.join(uid_dir, "cgroup.freeze")
@@ -333,12 +344,24 @@ def run_benchmark(duration=60):
     print("Starte 4-Kern stress-ng (Matrix-Multiplikation + RAM-Stress)...")
 
     orig_gov = read_file("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor", "schedutil")
+    had_state_file = os.path.exists("/run/rpi-fake-sleep.state")
+    try:
+        with open("/run/rpi-fake-sleep.state", "w") as f:
+            f.write("benchmark\n")
+    except Exception:
+        pass
 
-    # Ensure dynamic governor for FullLoad test
+    # Ensure dynamic governor & full 2.8 GHz max frequency for FullLoad test
     set_cpufreq_governor("schedutil")
 
+    if shutil.which("stress-ng"):
+        stress_cmd = ["stress-ng", "--cpu", "4", "--cpu-method", "matrixprod", "--vm", "2", "--vm-bytes", "512M", "--timeout", f"{duration+6}s"]
+    else:
+        stress_cmd = [sys.executable, "-c",
+                      f"import multiprocessing, time\ndef w():\n t=time.time()+{duration+6}\n x=1.0001\n while time.time()<t:\n  for _ in range(10000): x=(x*1.000001)%999999.0\nps=[multiprocessing.Process(target=w) for _ in range(4)]\nfor p in ps: p.start()\nfor p in ps: p.join()"]
+
     stress_proc = subprocess.Popen(
-        ["stress-ng", "--cpu", "4", "--cpu-method", "matrixprod", "--vm", "2", "--vm-bytes", "512M", "--timeout", f"{duration+6}s"],
+        stress_cmd,
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
     )
 
@@ -353,7 +376,8 @@ def run_benchmark(duration=60):
             stress_proc.wait(timeout=2)
         except Exception:
             pass
-        subprocess.run(["pkill", "-9", "-f", "stress-ng"], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if shutil.which("stress-ng"):
+            subprocess.run(["pkill", "-9", "-f", "stress-ng"], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     print("Volllast-Phase abgeschlossen, CPU kühlt ab...")
     time.sleep(3)
 
@@ -402,6 +426,8 @@ def run_benchmark(duration=60):
         set_wifi_power_save(True)
         set_audio_autosuspend()
         set_fan_sleep_mode(True)
+        if os.path.isfile("/usr/bin/cm5-mmc-fix"):
+            subprocess.run(["/usr/bin/cm5-mmc-fix", "--sleep"], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
         time.sleep(3) # Wait for complete settling
         sleep_samples = sample_period("FakeSleep", duration)
@@ -421,6 +447,8 @@ def run_benchmark(duration=60):
                     f.write("f")
         except Exception:
             pass
+        if os.path.isfile("/usr/bin/cm5-mmc-fix"):
+            subprocess.run(["/usr/bin/cm5-mmc-fix", "--wake"], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         set_fan_sleep_mode(False)
         set_wifi_power_save(False)
         set_cgroups_frozen(freeze=False)
@@ -436,6 +464,11 @@ def run_benchmark(duration=60):
             with open(f"{BL_PATH}/brightness", "w") as f:
                 f.write(orig_brightness)
         set_cpufreq_governor(orig_gov)
+        if not had_state_file and os.path.exists("/run/rpi-fake-sleep.state"):
+            try:
+                os.remove("/run/rpi-fake-sleep.state")
+            except Exception:
+                pass
 
     # -------------------------------------------------------------
     # AUSWERTUNG & BERICHT

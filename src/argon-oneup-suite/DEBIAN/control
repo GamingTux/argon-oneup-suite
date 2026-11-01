@@ -5,11 +5,14 @@ Maintainer: GamingTux <gamingtux@users.noreply.github.com>
 Section: admin
 Priority: optional
 Homepage: https://github.com/GamingTux/argon-oneup-suite
-Depends: argon-oneup-essentials (>= 1.2.5), argon-oneup-backlight (>= 1.2.5), argon-oneup-battery (>= 1.2.5), argon-oneup-lid (>= 1.2.5), argon-oneup-sensors (>= 1.2.5), argon-power-profiles (>= 1.2.5), cm5-mmc-fix (>= 1.2.5), rpi-fake-sleep (>= 1.2.5)
-Suggests: argon-oneup-plasma-widget (>= 1.2.5), argon-wfplug-batt (>= 1.2.5)
+Depends: argon-oneup-essentials (>= 1.2.5), argon-oneup-backlight (>= 1.2.5), argon-oneup-battery (>= 1.2.5), argon-oneup-lid (>= 1.2.5), argon-oneup-sensors (>= 1.2.5), argon-power-profiles (>= 1.2.5)
+Suggests: rpi-fake-sleep (>= 1.2.5), cm5-mmc-fix (>= 1.2.5), argon-oneup-plasma-widget (>= 1.2.5), ksystemstats-rpi5-fix (>= 1.2.5), rpi-pishutdown (>= 1.2.5), argon-wfplug-batt (>= 1.2.5)
 Description: Complete hardware support suite for Argon ONE UP laptop
- Metapackage that installs all drivers, services, and utilities for the
+ Metapackage that installs all core hardware drivers, services, and utilities for the
  Argon ONE UP laptop (based on Raspberry Pi 5 / Compute Module 5).
  Includes hardware essentials (antenna, NVMe Gen 3, USB host, 2.8 GHz boost, fan curve),
  battery telemetry (CW2217), DDC/CI display backlight, magnetic lid switch,
- power profiles daemon, hardware sensors, userspace sleep/standby, and CM5 fixes.
+ power profiles daemon, and standard lm-sensors hardware configuration.
+ Fully system-agnostic: works across all Linux distributions and desktop environments.
+ Optional extensions (Fake-Sleep, CM5 MMC fix, KDE widgets, and Pi OS dialogs)
+ are available as separate packages in extras.

@@ -1,0 +1,14 @@
+Package: rpi-pishutdown
+Version: 1.2.5
+Architecture: all
+Maintainer: GamingTux <gamingtux@users.noreply.github.com>
+Section: x11
+Priority: optional
+Homepage: https://github.com/GamingTux/argon-oneup-suite
+Depends: python3, python3-gi, gir1.2-gtk-3.0
+Recommends: rpi-fake-sleep
+Description: Standby-enabled Shutdown Dialog for Raspberry Pi OS (Labwc / LXDE)
+ Drop-in replacement for /usr/bin/pishutdown on Raspberry Pi OS.
+ Adds a "Standby (Ruhezustand)" button that interfaces with systemd-suspend
+ and rpi-fake-sleep for low-power sleep mode.
+ Diverts the original /usr/bin/pishutdown safely using dpkg-divert.

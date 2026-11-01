@@ -1,38 +1,9 @@
 #!/bin/bash
 set -e
 
-# Clean up legacy conffile drop-in in /etc if upgrading from < 1.2.5
-if [ -f /etc/systemd/user/plasma-ksystemstats.service.d/cpuinfo_fix.conf ]; then
-    rm -f /etc/systemd/user/plasma-ksystemstats.service.d/cpuinfo_fix.conf 2>/dev/null || true
-    rmdir --ignore-fail-on-non-empty /etc/systemd/user/plasma-ksystemstats.service.d 2>/dev/null || true
+if command -v sensors >/dev/null 2>&1; then
+    sensors >/dev/null 2>&1 || true
 fi
 
-# Set CAP_SYS_ADMIN file capability for namespace helper (with SUID fallback if chroot drops CAP_SETFCAP)
-if [ -f /usr/bin/ksystemstats-ns-helper ]; then
-    if setcap cap_sys_admin+ep /usr/bin/ksystemstats-ns-helper 2>/dev/null; then
-        chmod 0755 /usr/bin/ksystemstats-ns-helper
-        echo "[argon-oneup-sensors] Configured cap_sys_admin on /usr/bin/ksystemstats-ns-helper"
-    else
-        chmod 4755 /usr/bin/ksystemstats-ns-helper
-        echo "[argon-oneup-sensors] Configured SUID fallback on /usr/bin/ksystemstats-ns-helper (CAP_SETFCAP dropped in chroot)"
-    fi
-fi
-
-# Apply cpu_thermal patch to ksystemstats_plugin_cpu.so if present
-if [ -x /usr/sbin/ksystemstats-rpi5-fix ]; then
-    /usr/sbin/ksystemstats-rpi5-fix || true
-fi
-
-# Reload systemd user daemon and restart plasma-ksystemstats only if active
-for uid_dir in /run/user/[0-9]*; do
-    if [ -d "$uid_dir" ]; then
-        uid=$(basename "$uid_dir")
-        sudo -u "#$uid" XDG_RUNTIME_DIR="$uid_dir" DBUS_SESSION_BUS_ADDRESS="unix:path=${uid_dir}/bus" \
-            systemctl --user daemon-reload 2>/dev/null || true
-        sudo -u "#$uid" XDG_RUNTIME_DIR="$uid_dir" DBUS_SESSION_BUS_ADDRESS="unix:path=${uid_dir}/bus" \
-            systemctl --user try-restart plasma-ksystemstats.service 2>/dev/null || true
-    fi
-done
-
-echo "[argon-oneup-sensors] Hardware sensors and KDE System Monitor integration configured."
+echo "[argon-oneup-sensors] Hardware sensors configuration (/etc/sensors.d/argon-oneup.conf) installed."
 exit 0

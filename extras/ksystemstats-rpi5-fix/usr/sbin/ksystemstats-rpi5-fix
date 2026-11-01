@@ -17,7 +17,7 @@ cpu_path = (
     if root
     else "/usr/lib/aarch64-linux-gnu/qt6/plugins/ksystemstats/ksystemstats_plugin_cpu.so"
 )
-stamp_dir = os.path.join(root, "var/lib/argon-oneup-sensors") if root else "/var/lib/argon-oneup-sensors"
+stamp_dir = os.path.join(root, "var/lib/ksystemstats-rpi5-fix") if root else "/var/lib/ksystemstats-rpi5-fix"
 stamp_file = os.path.join(stamp_dir, "ksystemstats.stamp")
 backup_file = os.path.join(stamp_dir, "ksystemstats_plugin_cpu.so.orig")
 

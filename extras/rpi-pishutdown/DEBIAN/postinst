@@ -1,0 +1,15 @@
+#!/bin/bash
+set -e
+
+# Safe Debian diversion for /usr/bin/pishutdown on Raspberry Pi OS
+if [ "$1" = "configure" ]; then
+    if [ -f /usr/bin/pishutdown ] && [ ! -L /usr/bin/pishutdown ]; then
+        dpkg-divert --package rpi-pishutdown --add --rename --divert /usr/bin/pishutdown.original /usr/bin/pishutdown
+    fi
+    if [ -f /usr/bin/pishutdown.original ] || [ -f /usr/bin/pishutdown ]; then
+        ln -sf /usr/bin/rpi-pishutdown /usr/bin/pishutdown
+    fi
+fi
+
+echo "[rpi-pishutdown] Standby-enabled Raspberry Pi OS shutdown dialog installed."
+exit 0

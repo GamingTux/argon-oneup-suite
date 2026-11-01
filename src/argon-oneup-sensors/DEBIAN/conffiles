@@ -1,2 +1,1 @@
-/etc/apt/apt.conf.d/99-ksystemstats-rpi5-fix
 /etc/sensors.d/argon-oneup.conf

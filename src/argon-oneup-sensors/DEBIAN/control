@@ -1,16 +1,13 @@
 Package: argon-oneup-sensors
 Version: 1.2.5
-Architecture: arm64
+Architecture: all
 Maintainer: GamingTux <gamingtux@users.noreply.github.com>
 Section: utils
 Priority: optional
-Depends: libcap2-bin
 Recommends: lm-sensors
-Provides: rpi5-kde-sensors-fix
 Homepage: https://github.com/GamingTux/argon-oneup-suite
-Description: Argon ONE UP & Raspberry Pi CM5 Hardware Sensors & KDE Integration
- Routes and aliases all physical hardware sensors (CPU thermal, PWM fan RPM,
+Description: Argon ONE UP & Raspberry Pi CM5 Hardware Sensors Mapping
+ Routes and aliases physical hardware sensors (CPU thermal, PWM fan RPM,
  NVMe SSD temperature, CW2217 battery telemetry) via standard lm-sensors
  configuration (/etc/sensors.d/argon-oneup.conf).
- Fixes KDE Plasma 6 Systemmonitor ksystemstats ARM64 /proc/cpuinfo deadlock
- (KDE Bug #493093) via private mount namespace and maps cpu_thermal to CPU cards.
+ Compatible with all desktop environments, window managers, and servers.
