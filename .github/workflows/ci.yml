@@ -110,7 +110,7 @@ jobs:
           chmod +x scripts/build_apt_repo.sh
           ./scripts/build_apt_repo.sh
 
-      - name: Deploy APT Repository to GitHub Pages
+      - name: Deploy to gh-pages branch
         if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
         uses: peaceiris/actions-gh-pages@v4
         with:
@@ -118,6 +118,17 @@ jobs:
           publish_dir: ./public
           publish_branch: gh-pages
           force_orphan: true
+
+      - name: Upload Pages artifact
+        if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./public
+
+      - name: Deploy to GitHub Pages
+        if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+        id: deployment
+        uses: actions/deploy-pages@v4
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
