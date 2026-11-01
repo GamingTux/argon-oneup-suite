@@ -3,8 +3,5 @@ set -e
 if [ "$1" = "purge" ] || [ "$1" = "remove" ]; then
     systemctl daemon-reload 2>/dev/null || true
     udevadm control --reload-rules 2>/dev/null || true
-    if command -v glib-compile-schemas >/dev/null 2>&1; then
-        glib-compile-schemas /usr/share/glib-2.0/schemas 2>/dev/null || true
-    fi
 fi
 exit 0
