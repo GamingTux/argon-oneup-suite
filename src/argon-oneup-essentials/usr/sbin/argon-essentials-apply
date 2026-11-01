@@ -140,6 +140,7 @@ fi
 # Clean up obsolete files from older package versions
 rm -f /boot/firmware/overlays/cm5-disable-ethernet.dtbo /boot/overlays/cm5-disable-ethernet.dtbo 2>/dev/null || true
 rm -f /etc/sysctl.d/90-argon-oneup-essentials.conf 2>/dev/null || true
+rm -f /etc/udev/rules.d/90-lmpe-runtime.rules /usr/sbin/lmpe-runtime-tune /etc/udev/rules.d/60-ondemand-governor.rules /etc/NetworkManager/conf.d/99-lmpe-wifi-powersave-off.conf 2>/dev/null || true
 if [ -f /etc/ddcutil/ddcutilrc ]; then
     rm -f /etc/ddcutil/ddcutilrc 2>/dev/null || true
     rmdir --ignore-fail-on-non-empty /etc/ddcutil 2>/dev/null || true
@@ -171,7 +172,6 @@ if [ -n "$BOOT_CFG" ] && [ -f "$BOOT_CFG" ]; then
             echo "usb_max_current_enable=1"
             echo "dtoverlay=dwc2,dr_mode=host"
         fi
-        echo "[pi5]"
         if [ -n "$ARM_FREQ" ] && [ "$ARM_FREQ" -gt 0 ] 2>/dev/null; then
             echo "arm_freq=${ARM_FREQ}"
         fi
@@ -189,7 +189,6 @@ if [ -n "$BOOT_CFG" ] && [ -f "$BOOT_CFG" ]; then
             echo "dtparam=fan_temp3_speed=250"
             echo "dtparam=fan_temp3_hyst=5000"
         fi
-        echo "[all]"
         echo "# --- END ARGON-ONEUP-ESSENTIALS ---"
     } >> "$BOOT_CFG"
 fi
