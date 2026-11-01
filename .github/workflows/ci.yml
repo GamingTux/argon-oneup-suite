@@ -14,6 +14,10 @@ permissions:
   pages: write
   id-token: write
 
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
 jobs:
   build-and-deploy:
     name: Build Packages, APT Repo & Release
@@ -80,7 +84,7 @@ jobs:
           ./scripts/build_apt_repo.sh
 
       - name: Deploy APT Repository to GitHub Pages
-        if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+        if: startsWith(github.ref, 'refs/tags/v')
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
