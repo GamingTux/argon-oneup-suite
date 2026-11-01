@@ -1,4 +1,4 @@
-name: CI & Automated Release
+name: CI, Package Build & APT Repository
 
 on:
   push:
@@ -11,10 +11,12 @@ on:
 
 permissions:
   contents: write
+  pages: write
+  id-token: write
 
 jobs:
-  build-and-release:
-    name: Build, Verify & Release
+  build-and-deploy:
+    name: Build Packages, APT Repo & Release
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -25,7 +27,7 @@ jobs:
       - name: Install build tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y dpkg-dev shellcheck python3 gcc-aarch64-linux-gnu device-tree-compiler
+          sudo apt-get install -y dpkg-dev apt-utils shellcheck python3 gcc-aarch64-linux-gnu device-tree-compiler
 
       - name: Syntax & Lint check
         run: |
@@ -40,6 +42,7 @@ jobs:
 
           echo "=== Checking Shell syntax ==="
           bash -n build_packages.sh
+          bash -n scripts/build_apt_repo.sh
           find src extras -type f -name "postinst" -exec bash -n {} +
           find src extras -type f -name "postrm" -exec bash -n {} +
           find src extras -type f -name "prerm" -exec bash -n {} +
@@ -62,6 +65,28 @@ jobs:
             dpkg-deb -I "$deb"
             dpkg-deb -c "$deb"
           done
+
+      - name: Import GPG Key for APT Signing
+        if: env.APT_GPG_KEY != ''
+        env:
+          APT_GPG_KEY: ${{ secrets.APT_GPG_PRIVATE_KEY }}
+        run: |
+          echo "$APT_GPG_KEY" | gpg --batch --import
+          gpg --list-secret-keys
+
+      - name: Generate APT Repository
+        run: |
+          chmod +x scripts/build_apt_repo.sh
+          ./scripts/build_apt_repo.sh
+
+      - name: Deploy APT Repository to GitHub Pages
+        if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./public
+          publish_branch: gh-pages
+          keep_files: false
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4

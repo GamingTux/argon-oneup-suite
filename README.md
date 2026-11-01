@@ -90,9 +90,32 @@ Measured on the **Argon ONE UP Laptop** (Raspberry Pi Compute Module 5 Lite, 8 G
 
 ## 🚀 Quick Start & Installation
 
-Download the pre-built `.deb` packages from the [**Latest GitHub Release**](https://github.com/GamingTux/argon-oneup-suite/releases/latest) or clone and build directly from source.
+### Option A: Official APT Repository (Recommended — Automatic Updates)
 
-### 1. Install the Core Hardware Suite (Recommended for All Desktops)
+Once `argon-oneup-essentials` is installed, the APT repository and GPG signing key are automatically configured. To set it up manually on any fresh Raspberry Pi OS, Debian, or Ubuntu installation:
+
+```bash
+# 1. Install the official repository GPG keyring
+sudo mkdir -p /usr/share/keyrings
+curl -fsSL https://gamingtux.github.io/argon-oneup-suite/argon-oneup-archive-keyring.gpg | sudo tee /usr/share/keyrings/argon-oneup-archive-keyring.gpg > /dev/null
+
+# 2. Add the repository sources list
+sudo tee /etc/apt/sources.list.d/argon-oneup.sources << 'EOF'
+Types: deb
+URIs: https://gamingtux.github.io/argon-oneup-suite/
+Suites: stable
+Components: main
+Signed-By: /usr/share/keyrings/argon-oneup-archive-keyring.gpg
+EOF
+
+# 3. Update and install the complete hardware suite
+sudo apt update
+sudo apt install argon-oneup-suite
+```
+
+### Option B: Offline Installation via `.deb` Packages
+
+Download the pre-built `.deb` packages from the [**Latest GitHub Release**](https://github.com/GamingTux/argon-oneup-suite/releases/latest) or clone and build directly from source:
 
 ```bash
 sudo apt update

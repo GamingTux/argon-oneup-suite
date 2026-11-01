@@ -1,0 +1,5 @@
+Types: deb
+URIs: https://gamingtux.github.io/argon-oneup-suite/
+Suites: stable
+Components: main
+Signed-By: /usr/share/keyrings/argon-oneup-archive-keyring.gpg

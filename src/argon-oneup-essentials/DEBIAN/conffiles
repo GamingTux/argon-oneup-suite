@@ -1,4 +1,5 @@
 /etc/argon-oneup-essentials.conf
+/etc/apt/sources.list.d/argon-oneup.sources
 /etc/sysctl.d/99-z-argon-oneup-essentials.conf
 /etc/modules-load.d/argon-bbr.conf
 /etc/systemd/zram-generator.conf.d/90-argon-oneup.conf
