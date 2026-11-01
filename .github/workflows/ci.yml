@@ -32,7 +32,8 @@ jobs:
       - name: Syntax & Lint check
         run: |
           echo "=== Checking Python syntax ==="
-          python3 -m py_compile src/argon-power-profiles/usr/sbin/argon-power-profiles
+          python3 -m py_compile src/argon-oneup-power-profiles/usr/sbin/argon-oneup-power-profiles
+          python3 -m py_compile src/argon-oneup-power-profiles/usr/bin/powerprofilesctl
           python3 -m py_compile src/argon-oneup-essentials/usr/sbin/argononeup-eepromconfig.py
           python3 -m py_compile extras/ksystemstats-rpi5-fix/usr/sbin/ksystemstats-rpi5-fix
           python3 -m py_compile extras/cm5-mmc-fix/usr/bin/cm5-mmc-fix

@@ -59,7 +59,7 @@ find "${SRC_DIR}" "${EXTRAS_SRC_DIR}" -type f -not -perm -0100 -exec chmod 0644 
 find "${SRC_DIR}" "${EXTRAS_SRC_DIR}" -path "*/DEBIAN/post*" -exec chmod 0755 {} +
 find "${SRC_DIR}" "${EXTRAS_SRC_DIR}" -path "*/DEBIAN/pre*" -exec chmod 0755 {} +
 
-for pkg in argon-oneup-essentials argon-oneup-backlight argon-oneup-battery argon-oneup-lid argon-oneup-sensors argon-power-profiles argon-oneup-suite; do
+for pkg in argon-oneup-essentials argon-oneup-backlight argon-oneup-battery argon-oneup-lid argon-oneup-sensors argon-oneup-power-profiles argon-oneup-suite; do
     PKG_PATH="${SRC_DIR}/${pkg}"
     if [ -d "${PKG_PATH}" ]; then
         echo "Building core package: ${pkg}..."

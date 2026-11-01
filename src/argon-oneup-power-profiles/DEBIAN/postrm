@@ -4,7 +4,7 @@ if [ "$1" = "remove" ] || [ "$1" = "purge" ]; then
     systemctl unmask power-profiles-daemon.service 2>/dev/null || true
 fi
 if [ "$1" = "purge" ]; then
-    rm -rf /var/lib/argon-power-profiles
+    rm -rf /var/lib/argon-oneup-power-profiles /var/lib/argon-power-profiles
 fi
 systemctl daemon-reload 2>/dev/null || true
 exit 0

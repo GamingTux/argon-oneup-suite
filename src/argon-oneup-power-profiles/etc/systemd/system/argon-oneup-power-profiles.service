@@ -1,5 +1,5 @@
 [Unit]
-Description=Argon ONE UP / Raspberry Pi Power Profiles Daemon
+Description=Argon ONE UP Laptop Hardware Power Profiles Daemon
 Documentation=https://github.com/GamingTux/argon-oneup-suite
 Conflicts=power-profiles-daemon.service
 Before=plasma-powerdevil.service
@@ -7,11 +7,11 @@ After=local-fs.target
 
 [Service]
 Type=simple
-ExecStart=/usr/sbin/argon-power-profiles
+ExecStart=/usr/sbin/argon-oneup-power-profiles
 Restart=on-failure
 RestartSec=2
 KillMode=process
 
 [Install]
 WantedBy=multi-user.target
-Alias=power-profiles-daemon.service rpi-power-profiles.service
+Alias=power-profiles-daemon.service rpi-power-profiles.service argon-power-profiles.service

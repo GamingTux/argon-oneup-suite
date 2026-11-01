@@ -1,5 +1,7 @@
 #!/bin/bash
 set -e
+systemctl stop argon-oneup-power-profiles.service 2>/dev/null || true
+systemctl disable argon-oneup-power-profiles.service 2>/dev/null || true
 systemctl stop argon-power-profiles.service 2>/dev/null || true
 systemctl disable argon-power-profiles.service 2>/dev/null || true
 exit 0

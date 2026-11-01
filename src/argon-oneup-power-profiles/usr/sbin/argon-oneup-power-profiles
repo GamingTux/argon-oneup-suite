@@ -13,8 +13,11 @@ INTERFACE_UPOWER = "org.freedesktop.UPower.PowerProfiles"
 INTERFACE_HADESS = "net.hadess.PowerProfiles"
 INTERFACE_PROPS = "org.freedesktop.DBus.Properties"
 
-CONFIG_FILE = "/var/lib/argon-power-profiles/config.json"
-LEGACY_STATE_FILE = "/var/lib/argon-power-profiles/state"
+STATE_DIR = "/var/lib/argon-oneup-power-profiles"
+if not os.path.isdir(STATE_DIR) and os.path.isdir("/var/lib/argon-power-profiles"):
+    STATE_DIR = "/var/lib/argon-power-profiles"
+CONFIG_FILE = os.path.join(STATE_DIR, "config.json")
+LEGACY_STATE_FILE = os.path.join(STATE_DIR, "state")
 
 DEFAULT_CONFIG = {
     "active_profile": "balanced",

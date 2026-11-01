@@ -27,7 +27,7 @@ Out of the box, standard Linux distributions (Raspberry Pi OS 64-bit Trixie/Book
   * **2.8 GHz CPU Boost, `schedutil` Governor & Quiet 4-Stage Fan Curve (`arm_freq=2800`):** Configures 2.8 GHz Cortex-A76 boost clock, low-latency `schedutil` governor (`rate_limit_us=1000`), and a quiet 4-stage PWM blower fan curve (`40 / 50 / 60 / 70 °C` with `5 °C` hysteresis).
   * **Multi-Core GICv2 Interrupt Spreading & 4-Core Network RPS:** Distributes heavy ARM64 `Level` interrupts across all 4 cores (`CPU0`: `rp1`/`xhci`, `CPU1`: `dwc2`, `CPU2`: `v3d`, `CPU3`: `vc4`/`hvs`/`mmc`) protected via `/usr/bin/argon-oneup-irq-policy`, paired with 4-core Receive Packet Steering (`rps_cpus=f`) and TCP BBR.
   * **`lz4` ZRAM, VM Sysctl & Desktop Polish:** Configures ultra-fast `lz4` ZRAM with `vm.swappiness=15` and a 64 MB DMA reserve (`vm.min_free_kbytes=65536`), Subpixel RGB font rendering, touchpad tap-to-click, and USB webcam/audio quirks.
-* **⚡ Dynamic ARM64 Power Profiles (`argon-power-profiles`):** Drop-in D-Bus replacement for `power-profiles-daemon` (`power-saver` @ 1.5 GHz, `balanced` @ dynamic `schedutil` 2.8 GHz, `performance` @ locked 2.8 GHz) with dynamic PCIe ASPM switching, automatic AC/battery profile switching, and per-profile display brightness memory.
+* **⚡ Dynamic ARM64 Power Profiles (`argon-oneup-power-profiles`):** Drop-in D-Bus replacement for `power-profiles-daemon` (`power-saver` @ 1.5 GHz, `balanced` @ dynamic `schedutil` 2.8 GHz, `performance` @ locked 2.8 GHz) with dynamic PCIe ASPM switching, automatic AC/battery profile switching, and per-profile display brightness memory.
 * **🛠️ Raspberry Pi CM5 Lite Shutdown Hang Fix (`cm5-mmc-fix`):** Eliminates the 30–80 second shutdown/reboot hang caused by the BCM2712 SDHCI 100 kHz hardware timeout when the microSD slot is empty.
 
 ---
@@ -45,7 +45,7 @@ The project is cleanly divided into **9 Core Hardware & System Packages** ([`src
 | [**`argon-oneup-backlight`**](src/argon-oneup-backlight) | `all` | **DDC/CI Display Backlight Bridge:** Exposes the internal display on I2C bus 14 as `/sys/class/backlight/ddcci*` for universal brightness keys and desktop sliders. |
 | [**`argon-oneup-lid`**](src/argon-oneup-lid) | `all` | **Magnetic Lid Switch Overlay:** Configures GPIO 27 as a native Linux `SW_LID` input device via Device Tree overlay. |
 | [**`argon-oneup-sensors`**](src/argon-oneup-sensors) | `all` | **Hardware Sensors Mapping:** Standardizes `lm-sensors` physical hardware definitions (`/etc/sensors.d/argon-oneup.conf`) for CPU thermal, RP1, PWM Fan RPM, NVMe SSD temperature, and CW2217 battery telemetry across all Linux distributions. |
-| [**`argon-power-profiles`**](src/argon-power-profiles) | `all` | **ARM64 Power Profiles Daemon:** Implements `org.freedesktop.UPower.PowerProfiles` / `net.hadess.PowerProfiles` D-Bus APIs to manage `schedutil`/`performance`/`powersave` CPU governors, PCIe ASPM, Wi-Fi power saving, and display backlight states. |
+| [**`argon-oneup-power-profiles`**](src/argon-oneup-power-profiles) | `all` | **ARM64 Power Profiles Daemon:** Implements `org.freedesktop.UPower.PowerProfiles` / `net.hadess.PowerProfiles` D-Bus APIs to manage `schedutil`/`performance`/`powersave` CPU governors, PCIe ASPM, Wi-Fi power saving, and display backlight states. |
 | [**`argon-oneup-suite`**](src/argon-oneup-suite) | `all` | **Core Metapackage:** Installs all 6 core hardware packages above with a single command. 100% system-agnostic and clean: modifies no third-party system components. |
 
 ### Extras: Optional Standby, Hardware Fixes & Desktop Widgets ([`extras/`](extras))
@@ -124,7 +124,7 @@ sudo apt install ./argon-oneup-essentials_*.deb \
                  ./argon-oneup-backlight_*.deb \
                  ./argon-oneup-lid_*.deb \
                  ./argon-oneup-sensors_*.deb \
-                 ./argon-power-profiles_*.deb \
+                 ./argon-oneup-power-profiles_*.deb \
                  ./cm5-mmc-fix_*.deb \
                  ./rpi-fake-sleep_*.deb \
                  ./argon-oneup-suite_*.deb

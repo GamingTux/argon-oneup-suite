@@ -1,0 +1,34 @@
+#!/bin/bash
+set -e
+
+# Stop and mask the generic upstream power-profiles-daemon if present
+if systemctl list-unit-files power-profiles-daemon.service >/dev/null 2>&1; then
+    systemctl stop power-profiles-daemon.service 2>/dev/null || true
+    systemctl disable power-profiles-daemon.service 2>/dev/null || true
+    systemctl mask power-profiles-daemon.service 2>/dev/null || true
+fi
+
+# Stop old argon-power-profiles service name if running
+if systemctl is-active --quiet argon-power-profiles.service 2>/dev/null; then
+    systemctl stop argon-power-profiles.service 2>/dev/null || true
+fi
+
+# Ensure state directory exists and migrate legacy state if present
+mkdir -p /var/lib/argon-oneup-power-profiles
+chmod 755 /var/lib/argon-oneup-power-profiles
+if [ -d /var/lib/argon-power-profiles ] && [ ! -L /var/lib/argon-power-profiles ]; then
+    cp -rn /var/lib/argon-power-profiles/* /var/lib/argon-oneup-power-profiles/ 2>/dev/null || true
+    rm -rf /var/lib/argon-power-profiles
+fi
+if [ ! -e /var/lib/argon-power-profiles ]; then
+    ln -s /var/lib/argon-oneup-power-profiles /var/lib/argon-power-profiles 2>/dev/null || true
+fi
+
+# Reload systemd and enable/restart argon-oneup-power-profiles service
+systemctl daemon-reload 2>/dev/null || true
+systemctl unmask argon-oneup-power-profiles.service 2>/dev/null || true
+systemctl enable argon-oneup-power-profiles.service 2>/dev/null || true
+systemctl restart argon-oneup-power-profiles.service 2>/dev/null || true
+
+echo "[argon-oneup-power-profiles] Power profiles daemon installed and active."
+exit 0

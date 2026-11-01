@@ -397,7 +397,10 @@ static void collect_telemetry(Telemetry *t) {
 
     // 7. Active Profile
     snprintf(t->profile, sizeof(t->profile), "balanced");
-    FILE *cf = fopen("/var/lib/argon-power-profiles/config.json", "r");
+    FILE *cf = fopen("/var/lib/argon-oneup-power-profiles/config.json", "r");
+    if (!cf) {
+        cf = fopen("/var/lib/argon-power-profiles/config.json", "r");
+    }
     if (cf) {
         char cbuf[512];
         size_t n = fread(cbuf, 1, sizeof(cbuf) - 1, cf);
