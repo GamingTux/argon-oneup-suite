@@ -1,17 +1,26 @@
-name: CI & Package Build
+name: CI & Automated Release
 
 on:
   push:
     branches: [ "main" ]
+    tags:
+      - "v*"
   pull_request:
     branches: [ "main" ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
-  build:
+  build-and-release:
+    name: Build, Verify & Release
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Install build tools
         run: |
@@ -61,3 +70,19 @@ jobs:
           path: |
             dist/*.deb
             dist/extras/*.deb
+            dist/SHA256SUMS
+
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "Argon ONE UP Suite ${{ github.ref_name }}"
+          files: |
+            dist/*.deb
+            dist/extras/*.deb
+            dist/SHA256SUMS
+          generate_release_notes: true
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

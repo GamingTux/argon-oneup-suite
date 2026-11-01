@@ -61,7 +61,7 @@ The project is cleanly divided into **9 Core Hardware & System Packages** ([`src
 
 ---
 
-## ⚡ Power Consumption & Battery Runtime Benchmarks (`v1.2.5`)
+## ⚡ Power Consumption & Battery Runtime Benchmarks (`v1.3.0`)
 
 Measured on the **Argon ONE UP Laptop** (Raspberry Pi Compute Module 5 Lite, 8 GB LPDDR4X, 256 GB NVMe Gen 3 SSD, 53.28 Wh / 4800 mAh 3S1P Li-Ion battery, Kernel `6.18+rpt-rpi-2712`) using `sudo argon-power-bench`:
 

@@ -23,25 +23,25 @@ Keeping these packages in `extras/` ensures that the core hardware driver suite 
 
 ### Userspace Sleep / Standby
 ```bash
-sudo apt install ./rpi-fake-sleep_1.2.5_all.deb
+sudo apt install ./rpi-fake-sleep_*.deb
 ```
 
 ### Raspberry Pi CM5 Empty MicroSD Slot Fix
 ```bash
-sudo apt install ./cm5-mmc-fix_1.2.5_all.deb
+sudo apt install ./cm5-mmc-fix_*.deb
 ```
 
 ### KDE Plasma 6 System Monitor Sensors Fix
 ```bash
-sudo apt install ./ksystemstats-rpi5-fix_1.2.5_arm64.deb
+sudo apt install ./ksystemstats-rpi5-fix_*.deb
 ```
 
 ### Raspberry Pi OS (`wf-panel-pi` Enhanced Battery Widget & Standby Dialog)
 ```bash
-sudo apt install ./argon-wfplug-batt_1.2.5_arm64.deb ./rpi-pishutdown_1.2.5_all.deb
+sudo apt install ./argon-wfplug-batt_*.deb ./rpi-pishutdown_*.deb
 ```
 
 ### KDE Plasma 6 (Desktop Telemetry Dashboard)
 ```bash
-sudo apt install ./argon-oneup-plasma-widget_1.2.5_arm64.deb
+sudo apt install ./argon-oneup-plasma-widget_*.deb
 ```

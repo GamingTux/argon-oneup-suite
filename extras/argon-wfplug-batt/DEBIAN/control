@@ -1,5 +1,5 @@
 Package: argon-wfplug-batt
-Version: 1.2.5
+Version: 1.3.0
 Architecture: arm64
 Maintainer: GamingTux <gamingtux@users.noreply.github.com>
 Section: x11
