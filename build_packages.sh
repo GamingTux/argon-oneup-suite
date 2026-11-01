@@ -50,6 +50,11 @@ if command -v dtc >/dev/null 2>&1; then
             -o "${EXTRAS_SRC_DIR}/cm5-mmc-fix/usr/share/cm5-mmc-fix/overlays/cm5-sdcard-fast.dtbo" \
             "${EXTRAS_SRC_DIR}/cm5-mmc-fix/usr/share/cm5-mmc-fix/cm5-sdcard-fast.dts"
     fi
+    if [ -f "${EXTRAS_SRC_DIR}/rpi-vc4-edp/usr/share/rpi-vc4-edp/dts/argon-oneup-display.dts" ]; then
+        dtc -@ -I dts -O dtb -Wno-gpios_property \
+            -o "${EXTRAS_SRC_DIR}/rpi-vc4-edp/usr/share/rpi-vc4-edp/overlays/argon-oneup-display.dtbo" \
+            "${EXTRAS_SRC_DIR}/rpi-vc4-edp/usr/share/rpi-vc4-edp/dts/argon-oneup-display.dts"
+    fi
 fi
 
 echo "Normalizing file and directory permissions (0755 / 0644)..."
@@ -108,7 +113,7 @@ done
 
 echo "=== Building Argon ONE UP Extras (Optional Fixes, Standby, Widgets & Applets) ==="
 
-for pkg in argon-oneup-plasma-widget argon-wfplug-batt cm5-mmc-fix rpi-fake-sleep ksystemstats-rpi5-fix rpi-pishutdown; do
+for pkg in argon-oneup-plasma-widget argon-wfplug-batt cm5-mmc-fix rpi-fake-sleep ksystemstats-rpi5-fix rpi-pishutdown rpi-vc4-edp; do
     PKG_PATH="${EXTRAS_SRC_DIR}/${pkg}"
     if [ -d "${PKG_PATH}" ]; then
         package_dir "${PKG_PATH}" "${EXTRAS_DIST_DIR}" "${pkg}"

@@ -1,0 +1,14 @@
+Package: rpi-vc4-edp
+Version: 1.0.0
+Architecture: all
+Maintainer: GamingTux <gamingtux@users.noreply.github.com>
+Section: kernel
+Priority: optional
+Homepage: https://github.com/GamingTux/argon-oneup-suite
+Depends: bash, xz-utils
+Recommends: linux-headers-rpi-2712 | linux-headers-rpi-v8
+Description: Automatic Kernel eDP Patcher for Raspberry Pi CM4 / CM5 Laptops
+ Automatically builds and patches the vc4 DRM kernel module on every kernel
+ upgrade to expose internal HDMI laptop panels as eDP-1. Enables native
+ clamshell standby, instant wake, and desktop lid management. Auto-retires
+ once upstream kernel PR #7732 is merged and released.

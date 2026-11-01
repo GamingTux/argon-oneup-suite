@@ -1,0 +1,181 @@
+#!/bin/bash
+# /usr/sbin/rpi-vc4-edp
+# Automatic kernel patcher & manager for internal eDP-1 display support on Raspberry Pi CM4 / CM5 laptops
+set -e
+
+SRC_DIR="/usr/src/rpi-vc4-edp"
+OVERLAY_SRC="/usr/share/rpi-vc4-edp/overlays/argon-oneup-display.dtbo"
+CONFIG_TXT="/boot/firmware/config.txt"
+OVERLAYS_DIR="/boot/firmware/overlays"
+
+log() {
+    echo "[rpi-vc4-edp] $*"
+}
+
+ensure_overlay() {
+    if [ -d "$OVERLAYS_DIR" ] && [ -f "$OVERLAY_SRC" ]; then
+        if ! cmp -s "$OVERLAY_SRC" "$OVERLAYS_DIR/argon-oneup-display.dtbo"; then
+            cp "$OVERLAY_SRC" "$OVERLAYS_DIR/argon-oneup-display.dtbo"
+            log "Installed argon-oneup-display.dtbo to $OVERLAYS_DIR"
+        fi
+    fi
+
+    if [ -f "$CONFIG_TXT" ]; then
+        if ! grep -q "^dtoverlay=argon-oneup-display" "$CONFIG_TXT"; then
+            echo "dtoverlay=argon-oneup-display" >> "$CONFIG_TXT"
+            log "Added dtoverlay=argon-oneup-display to $CONFIG_TXT"
+        fi
+    fi
+}
+
+patch_kernel() {
+    local kver="${1:-$(uname -r)}"
+    local kbuild="/lib/modules/${kver}/build"
+    local mod_dir="/lib/modules/${kver}/kernel/drivers/gpu/drm/vc4"
+    local mod_path="${mod_dir}/vc4.ko.xz"
+
+    log "Checking kernel $kver for eDP-1 internal panel support..."
+
+    # 1. Auto-retire check: If upstream kernel already has the patch, do nothing
+    if [ -f "${kbuild}/drivers/gpu/drm/vc4/vc4_hdmi.c" ]; then
+        if grep -q "raspberrypi,is-internal-panel" "${kbuild}/drivers/gpu/drm/vc4/vc4_hdmi.c"; then
+            log "Upstream kernel $kver already has native internal panel support (PR #7732 merged). No patching needed."
+            ensure_overlay
+            return 0
+        fi
+    fi
+
+    # 2. Check if kernel headers are available
+    if [ ! -d "$kbuild" ]; then
+        log "WARNING: Kernel headers not found at $kbuild."
+        log "Please install headers: sudo apt install linux-headers-rpi-2712 (or linux-headers-${kver})"
+        return 0
+    fi
+
+    if [ ! -d "$SRC_DIR" ]; then
+        log "ERROR: Source directory $SRC_DIR not found!"
+        return 1
+    fi
+
+    log "Compiling patched vc4.ko against kernel headers $kver..."
+    local nproc_count
+    nproc_count=$(nproc 2>/dev/null || echo 2)
+
+    # Build out-of-tree module safely
+    if ! make -C "$kbuild" M="$SRC_DIR" modules -j"${nproc_count}" >/dev/null 2>&1; then
+        log "WARNING: Compilation failed for kernel $kver. Retaining default kernel driver to preserve system bootability."
+        make -C "$kbuild" M="$SRC_DIR" clean >/dev/null 2>&1 || true
+        return 0
+    fi
+
+    if [ ! -f "${SRC_DIR}/vc4.ko" ]; then
+        log "WARNING: vc4.ko was not produced. Skipping installation."
+        return 0
+    fi
+
+    # 3. Backup existing module if not already backed up
+    mkdir -p "$mod_dir"
+    if [ -f "$mod_path" ] && [ ! -f "${mod_path}.orig" ]; then
+        cp -a "$mod_path" "${mod_path}.orig"
+        log "Backed up original driver to ${mod_path}.orig"
+    fi
+
+    # 4. Compress and install
+    log "Installing patched vc4.ko.xz to $mod_path..."
+    xz -T0 -c "${SRC_DIR}/vc4.ko" > "$mod_path"
+    chmod 0644 "$mod_path"
+
+    # Clean temporary build artifacts
+    make -C "$kbuild" M="$SRC_DIR" clean >/dev/null 2>&1 || true
+
+    # 5. Run depmod
+    depmod -a "$kver" 2>/dev/null || true
+
+    # 6. Update initramfs if update-initramfs tool exists
+    if command -v update-initramfs >/dev/null 2>&1; then
+        log "Updating initramfs for kernel $kver..."
+        update-initramfs -u -k "$kver" >/dev/null 2>&1 || true
+    fi
+
+    ensure_overlay
+
+    log "Successfully installed patched eDP-1 driver for kernel $kver."
+}
+
+restore_kernel() {
+    local kver="${1:-$(uname -r)}"
+    local mod_dir="/lib/modules/${kver}/kernel/drivers/gpu/drm/vc4"
+    local mod_path="${mod_dir}/vc4.ko.xz"
+
+    if [ -f "${mod_path}.orig" ]; then
+        log "Restoring original vc4.ko.xz for kernel $kver..."
+        mv -f "${mod_path}.orig" "$mod_path"
+        depmod -a "$kver" 2>/dev/null || true
+        if command -v update-initramfs >/dev/null 2>&1; then
+            update-initramfs -u -k "$kver" >/dev/null 2>&1 || true
+        fi
+        log "Restored original driver successfully."
+    else
+        log "No backup (.orig) found for kernel $kver."
+    fi
+}
+
+show_status() {
+    echo "=== rpi-vc4-edp status ==="
+    echo "Running Kernel:    $(uname -r)"
+
+    local active_edp
+    active_edp=$(ls -d /sys/class/drm/card*-eDP-* 2>/dev/null || true)
+    local active_hdmi2
+    active_hdmi2=$(ls -d /sys/class/drm/card*-HDMI-A-2 2>/dev/null || true)
+
+    if [ -n "$active_edp" ]; then
+        echo "Internal Display:  ACTIVE as $(basename "$active_edp") (eDP Mode)"
+    elif [ -n "$active_hdmi2" ]; then
+        echo "Internal Display:  Legacy HDMI-A-2 (Standard Kernel Mode)"
+    else
+        echo "Internal Display:  Not detected in sysfs"
+    fi
+
+    if [ -f "$CONFIG_TXT" ] && grep -q "^dtoverlay=argon-oneup-display" "$CONFIG_TXT"; then
+        echo "Device Tree:       argon-oneup-display overlay active in config.txt"
+    else
+        echo "Device Tree:       argon-oneup-display overlay NOT active in config.txt"
+    fi
+
+    local kver
+    kver=$(uname -r)
+    local mod_path="/lib/modules/${kver}/kernel/drivers/gpu/drm/vc4/vc4.ko.xz"
+    if [ -f "${mod_path}.orig" ]; then
+        echo "Driver Status:     Patched (Backup .orig exists)"
+    else
+        echo "Driver Status:     Standard / Unmodified"
+    fi
+    echo "=========================="
+}
+
+case "$1" in
+    patch)
+        if [ "$(id -u)" -ne 0 ]; then
+            log "ERROR: 'patch' must be run as root (e.g. sudo rpi-vc4-edp patch)"
+            exit 1
+        fi
+        patch_kernel "$2"
+        ;;
+    restore)
+        if [ "$(id -u)" -ne 0 ]; then
+            log "ERROR: 'restore' must be run as root (e.g. sudo rpi-vc4-edp restore)"
+            exit 1
+        fi
+        restore_kernel "$2"
+        ;;
+    status)
+        show_status
+        ;;
+    *)
+        echo "Usage: rpi-vc4-edp [patch [KVER]|restore [KVER]|status]"
+        echo "Universal eDP-1 Display Patcher for Raspberry Pi CM4 / CM5 Laptops"
+        exit 1
+        ;;
+esac
+exit 0

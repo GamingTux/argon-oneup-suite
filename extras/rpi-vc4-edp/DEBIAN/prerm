@@ -1,0 +1,10 @@
+#!/bin/sh
+set -e
+
+if [ "$1" = "remove" ] || [ "$1" = "purge" ]; then
+    if [ -x /usr/bin/rpi-vc4-edp ]; then
+        /usr/bin/rpi-vc4-edp restore "$(uname -r)" || true
+    fi
+fi
+
+exit 0

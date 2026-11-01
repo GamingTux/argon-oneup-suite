@@ -1,0 +1,16 @@
+#!/bin/sh
+# /etc/kernel/postinst.d/zz-rpi-vc4-edp
+# Automatically patches vc4.ko with eDP-1 internal panel support on kernel upgrades
+
+set -e
+
+KVER="$1"
+if [ -z "$KVER" ]; then
+    exit 0
+fi
+
+if [ -x /usr/bin/rpi-vc4-edp ]; then
+    /usr/bin/rpi-vc4-edp patch "$KVER" || true
+fi
+
+exit 0

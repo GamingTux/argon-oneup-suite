@@ -1,0 +1,13 @@
+/dts-v1/;
+/plugin/;
+
+/ {
+    compatible = "raspberrypi,5-model-b", "brcm,bcm2712";
+
+    fragment@0 {
+        target = <&hdmi1>;
+        __overlay__ {
+            raspberrypi,is-internal-panel;
+        };
+    };
+};
