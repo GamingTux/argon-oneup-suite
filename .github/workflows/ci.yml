@@ -38,7 +38,6 @@ jobs:
           bash -n extras/ksystemstats-rpi5-fix/usr/bin/ksystemstats-cpuinfo-gen
           sh -n src/argon-oneup-essentials/usr/sbin/argon-essentials-apply
           sh -n src/argon-oneup-essentials/usr/bin/argon-oneup-irq-policy
-          sh -n src/argon-oneup-essentials/usr/bin/argon-brightness-step
 
       - name: Build Debian packages
         run: |
