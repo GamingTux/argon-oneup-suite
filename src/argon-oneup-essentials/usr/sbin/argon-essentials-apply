@@ -1,7 +1,11 @@
 #!/bin/sh
 set -e
 
-CONF_FILE="/etc/argon-oneup-essentials.conf"
+CONF_FILE="/etc/argon-oneup.conf"
+if [ ! -f "$CONF_FILE" ] && [ -f "/etc/argon-oneup-essentials.conf" ]; then
+    CONF_FILE="/etc/argon-oneup-essentials.conf"
+fi
+
 ARM_FREQ=2800
 ENABLE_ANT2=1
 ENABLE_NVME_GEN3=1
@@ -76,7 +80,7 @@ if [ "${1:-}" = "--remove" ]; then
     exit 0
 fi
 
-# Clean up obsolete files from older package versions that were moved to the base OS image
+# Clean up obsolete files from older package versions (consolidated into unified argon-oneup.conf names)
 rm -f /boot/firmware/overlays/cm5-disable-ethernet.dtbo /boot/overlays/cm5-disable-ethernet.dtbo 2>/dev/null || true
 rm -f /etc/sysctl.d/90-argon-oneup-essentials.conf /etc/sysctl.d/99-z-argon-oneup-essentials.conf 2>/dev/null || true
 rm -f /etc/modules-load.d/argon-bbr.conf 2>/dev/null || true
@@ -85,10 +89,17 @@ rm -f /etc/systemd/journald.conf.d/90-argon-oneup.conf 2>/dev/null || true
 rm -f /etc/systemd/system/fstrim.timer.d/acpower.conf 2>/dev/null || true
 rm -f /etc/profile.d/cm5-cortex-a76.sh 2>/dev/null || true
 rm -f /etc/udev/rules.d/90-argon-storage-io.rules 2>/dev/null || true
-rm -f /etc/X11/xorg.conf.d/99-v3d.conf 2>/dev/null || true
+rm -f /etc/X11/xorg.conf.d/99-v3d.conf /etc/X11/xorg.conf.d/50-touchpad-tapping.conf 2>/dev/null || true
 rm -f /etc/pipewire/pipewire.conf.d/10-audio-tuning.conf 2>/dev/null || true
+rm -f /etc/modprobe.d/argon-webcam-audio.conf /etc/modprobe.d/argon-hardware-blacklist.conf 2>/dev/null || true
+rm -f /etc/wireplumber/wireplumber.conf.d/50-disable-internal-hdmi-audio.conf 2>/dev/null || true
+rm -f /etc/NetworkManager/conf.d/90-argon-oneup-wifi.conf 2>/dev/null || true
 rm -f /etc/udev/rules.d/90-lmpe-runtime.rules /usr/sbin/lmpe-runtime-tune /etc/udev/rules.d/60-ondemand-governor.rules /etc/NetworkManager/conf.d/99-lmpe-wifi-powersave-off.conf 2>/dev/null || true
 rm -f /usr/bin/argon-oneup-irq-policy 2>/dev/null || true
+if [ -f /etc/argon-oneup-essentials.conf ] && [ -f /etc/argon-oneup.conf ]; then
+    rm -f /etc/argon-oneup-essentials.conf 2>/dev/null || true
+fi
+
 if [ -f /etc/default/irqbalance ] && grep -q "argon-oneup-irq-policy" /etc/default/irqbalance; then
     sed -i '/argon-oneup-irq-policy/d' /etc/default/irqbalance 2>/dev/null || true
     if ! is_chroot; then
