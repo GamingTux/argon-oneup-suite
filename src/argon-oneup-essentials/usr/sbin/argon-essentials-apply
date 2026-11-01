@@ -220,7 +220,7 @@ fi
 
 # Disable boot-time fsck on FAT32 /boot/firmware partition to eliminate ~250-300ms boot delay
 if [ "${OPTIMIZE_FSTAB_FSCK:-1}" = "1" ] && [ -f /etc/fstab ]; then
-    sed -i -E 's|^(\s*[^#\s]+\s+/(boot/firmware|boot)\s+vfat\s+\S+\s+[0-9]+\s+)2|\10|' /etc/fstab 2>/dev/null || true
+    sed -i -E 's#^([[:space:]]*[^#[:space:]]+[[:space:]]+(/boot/firmware|/boot)[[:space:]]+vfat[[:space:]]+[^[:space:]]+[[:space:]]+[0-9]+[[:space:]]+)2#\10#' /etc/fstab 2>/dev/null || true
 fi
 
 # Apply runtime CPU/RPS/eth0 optimizations immediately (skipped inside chroot)
