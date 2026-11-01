@@ -3,12 +3,12 @@
 [![Release](https://img.shields.io/github/v/release/GamingTux/argon-oneup-suite?style=flat-square&color=00e5ff)](https://github.com/GamingTux/argon-oneup-suite/releases/latest)
 [![CI & Package Build](https://img.shields.io/github/actions/workflow/status/GamingTux/argon-oneup-suite/ci.yml?branch=main&style=flat-square&label=CI%20Build)](https://github.com/GamingTux/argon-oneup-suite/actions)
 [![Platform](https://img.shields.io/badge/Platform-Raspberry%20Pi%20CM5%20%2F%20Pi%205%20(ARM64)-blue?style=flat-square)](https://www.raspberrypi.com/)
-[![OS Support](https://img.shields.io/badge/OS-Raspberry%20Pi%20OS%20%7C%20LMDE%207%20%7C%20Debian%20%7C%20Ubuntu-red?style=flat-square)](https://www.debian.org/)
+[![OS Support](https://img.shields.io/badge/OS-LMPE%20%7C%20Raspberry%20Pi%20OS%20%7C%20Debian%20%7C%20Ubuntu-green?style=flat-square)](https://github.com/GamingTux/argon-oneup-suite)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
 
 **Complete Linux hardware driver, power management, sleep/standby, and desktop integration suite for the [Argon ONE UP Laptop](https://argon40.com/) powered by the Raspberry Pi Compute Module 5 (CM5 / CM5 Lite).**
 
-Out of the box, standard Linux distributions (Raspberry Pi OS 64-bit Trixie/Bookworm, LMDE 7 Gigi, Debian 12/13, Ubuntu 24.04/24.10, KDE Plasma, Cinnamon, GNOME, XFCE) lack native kernel drivers and hardware definitions for the Argon ONE UP laptop's custom embedded components. **Argon ONE UP Suite** bridges every hardware component directly into standard Linux kernel subsystems (`/sys/class/power_supply`, `/sys/class/backlight`, `EV_SW`/`SW_LID`, `hwmon`/`lm-sensors`, `UPower`, `systemd-logind`, and `power-profiles-daemon`)—with zero proprietary background bloat and lightning-fast **~5.8 second boot times**.
+Out of the box, standard Linux distributions (LMPE / Linux Mint Pi Edition, Raspberry Pi OS 64-bit Trixie/Bookworm, LMDE 7 Gigi, Debian 12/13, Ubuntu 24.04/24.10, Cinnamon, KDE Plasma, GNOME, XFCE) lack native kernel drivers and hardware definitions for the Argon ONE UP laptop's custom embedded components. **Argon ONE UP Suite** bridges every hardware component directly into standard Linux kernel subsystems (`/sys/class/power_supply`, `/sys/class/backlight`, `EV_SW`/`SW_LID`, `hwmon`/`lm-sensors`, `UPower`, `systemd-logind`, and `power-profiles-daemon`)—with zero proprietary background bloat and lightning-fast **~5.8 second boot times**.
 
 ![Argon ONE UP KDE Plasma 6 Hardware Telemetry Dashboard](assets/dashboard-screenshot.png)
 
@@ -136,7 +136,7 @@ Measured on the **Argon ONE UP Laptop** (Raspberry Pi Compute Module 5 Lite, 8 G
 
 ### Option A: Official APT Repository (Recommended — Automatic Updates)
 
-Once `argon-oneup-essentials` is installed, the APT repository and GPG signing key are automatically configured. To set it up manually on any fresh Raspberry Pi OS, LMDE, Debian, or Ubuntu installation:
+Once `argon-oneup-essentials` is installed, the APT repository and GPG signing key are automatically configured. To set it up manually on any fresh LMPE, Raspberry Pi OS, Debian, or Ubuntu installation:
 
 ```bash
 # 1. Install the official repository GPG keyring
