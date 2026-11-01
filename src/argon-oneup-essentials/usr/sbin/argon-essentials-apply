@@ -8,6 +8,10 @@ ENABLE_NVME_GEN3=1
 ENABLE_USB_HOST_AND_MAX_CURRENT=1
 DISABLE_UNUSED_ETHERNET=1
 ENABLE_FAN_CURVE=1
+DISABLE_CAMERA_PROBE=1
+DISABLE_DISPLAY_PROBE=1
+DISABLE_UART=1
+OPTIMIZE_FSTAB_FSCK=1
 
 if [ -f "$CONF_FILE" ]; then
     # shellcheck disable=SC1090
@@ -122,9 +126,39 @@ fi
 
 if [ -n "$BOOT_CFG" ] && [ -f "$BOOT_CFG" ]; then
     remove_block
+
+    # Harmonize hardware probe directives across base config.txt
+    if [ "${DISABLE_CAMERA_PROBE:-1}" = "1" ]; then
+        sed -i 's/^[[:space:]]*camera_auto_detect=1/camera_auto_detect=0/' "$BOOT_CFG" 2>/dev/null || true
+    elif [ "${DISABLE_CAMERA_PROBE:-1}" = "0" ]; then
+        sed -i 's/^[[:space:]]*camera_auto_detect=0/camera_auto_detect=1/' "$BOOT_CFG" 2>/dev/null || true
+    fi
+
+    if [ "${DISABLE_DISPLAY_PROBE:-1}" = "1" ]; then
+        sed -i 's/^[[:space:]]*display_auto_detect=1/display_auto_detect=0/' "$BOOT_CFG" 2>/dev/null || true
+    elif [ "${DISABLE_DISPLAY_PROBE:-1}" = "0" ]; then
+        sed -i 's/^[[:space:]]*display_auto_detect=0/display_auto_detect=1/' "$BOOT_CFG" 2>/dev/null || true
+    fi
+
+    if [ "${DISABLE_UART:-1}" = "1" ]; then
+        sed -i 's/^[[:space:]]*dtparam=uart0=on/dtparam=uart0=off/' "$BOOT_CFG" 2>/dev/null || true
+    elif [ "${DISABLE_UART:-1}" = "0" ]; then
+        sed -i 's/^[[:space:]]*dtparam=uart0=off/dtparam=uart0=on/' "$BOOT_CFG" 2>/dev/null || true
+    fi
+
     HAS_I2C_ARM=0
     if grep -q "^[[:space:]]*dtparam=i2c_arm=on" "$BOOT_CFG" 2>/dev/null; then
         HAS_I2C_ARM=1
+    fi
+
+    HAS_DWC2=0
+    if grep -q "^[[:space:]]*dtoverlay=dwc2" "$BOOT_CFG" 2>/dev/null; then
+        HAS_DWC2=1
+    fi
+
+    HAS_USB_MAX=0
+    if grep -q "^[[:space:]]*usb_max_current_enable=1" "$BOOT_CFG" 2>/dev/null; then
+        HAS_USB_MAX=1
     fi
 
     {
@@ -133,8 +167,21 @@ if [ -n "$BOOT_CFG" ] && [ -f "$BOOT_CFG" ]; then
         if [ "$HAS_I2C_ARM" = "0" ]; then
             echo "dtparam=i2c_arm=on"
         fi
-        echo "camera_auto_detect=0"
-        echo "display_auto_detect=0"
+        if [ "${DISABLE_CAMERA_PROBE:-1}" = "1" ]; then
+            if ! grep -q "^[[:space:]]*camera_auto_detect=0" "$BOOT_CFG" 2>/dev/null; then
+                echo "camera_auto_detect=0"
+            fi
+        fi
+        if [ "${DISABLE_DISPLAY_PROBE:-1}" = "1" ]; then
+            if ! grep -q "^[[:space:]]*display_auto_detect=0" "$BOOT_CFG" 2>/dev/null; then
+                echo "display_auto_detect=0"
+            fi
+        fi
+        if [ "${DISABLE_UART:-1}" = "1" ]; then
+            if ! grep -q "^[[:space:]]*dtparam=uart0=off" "$BOOT_CFG" 2>/dev/null; then
+                echo "dtparam=uart0=off"
+            fi
+        fi
         if [ "${ENABLE_NVME_GEN3:-1}" = "1" ]; then
             echo "dtparam=nvme"
             echo "dtparam=pciex1_gen=3"
@@ -143,8 +190,12 @@ if [ -n "$BOOT_CFG" ] && [ -f "$BOOT_CFG" ]; then
             echo "dtparam=ant2"
         fi
         if [ "${ENABLE_USB_HOST_AND_MAX_CURRENT:-1}" = "1" ]; then
-            echo "usb_max_current_enable=1"
-            echo "dtoverlay=dwc2,dr_mode=host"
+            if [ "$HAS_USB_MAX" = "0" ]; then
+                echo "usb_max_current_enable=1"
+            fi
+            if [ "$HAS_DWC2" = "0" ]; then
+                echo "dtoverlay=dwc2,dr_mode=host"
+            fi
         fi
         if [ -n "$ARM_FREQ" ] && [ "$ARM_FREQ" -gt 0 ] 2>/dev/null; then
             echo "arm_freq=${ARM_FREQ}"
@@ -165,6 +216,11 @@ if [ -n "$BOOT_CFG" ] && [ -f "$BOOT_CFG" ]; then
         fi
         echo "# --- END ARGON-ONEUP-ESSENTIALS ---"
     } >> "$BOOT_CFG"
+fi
+
+# Disable boot-time fsck on FAT32 /boot/firmware partition to eliminate ~250-300ms boot delay
+if [ "${OPTIMIZE_FSTAB_FSCK:-1}" = "1" ] && [ -f /etc/fstab ]; then
+    sed -i -E 's|^(\s*[^#\s]+\s+/(boot/firmware|boot)\s+vfat\s+\S+\s+[0-9]+\s+)2|\10|' /etc/fstab 2>/dev/null || true
 fi
 
 # Apply runtime CPU/RPS/eth0 optimizations immediately (skipped inside chroot)
