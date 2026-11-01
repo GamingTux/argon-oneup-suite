@@ -26,14 +26,14 @@ else
 fi
 
 if [ -f "${EXTRAS_SRC_DIR}/argon-oneup-plasma-widget/usr/src/argon-oneup-telemetry.c" ]; then
-    echo "Compiling argon-oneup-telemetry binary (C / Cortex-A76)..."
-    "${CC_BIN}" -O3 -pipe -march=armv8.2-a+crypto+fp16+dotprod -mtune=cortex-a76 "${EXTRAS_SRC_DIR}/argon-oneup-plasma-widget/usr/src/argon-oneup-telemetry.c" -o "${EXTRAS_SRC_DIR}/argon-oneup-plasma-widget/usr/bin/argon-oneup-telemetry"
+    echo "Compiling argon-oneup-telemetry binary (C / Cortex-A76 + LTO + Vectorize)..."
+    "${CC_BIN}" -O3 -pipe -march=armv8.2-a+crypto+fp16+dotprod -mtune=cortex-a76 -ftree-vectorize -flto=auto -ffat-lto-objects "${EXTRAS_SRC_DIR}/argon-oneup-plasma-widget/usr/src/argon-oneup-telemetry.c" -o "${EXTRAS_SRC_DIR}/argon-oneup-plasma-widget/usr/bin/argon-oneup-telemetry"
     "${STRIP_BIN}" "${EXTRAS_SRC_DIR}/argon-oneup-plasma-widget/usr/bin/argon-oneup-telemetry"
 fi
 
 if [ -f "${EXTRAS_SRC_DIR}/ksystemstats-rpi5-fix/usr/src/ksystemstats-ns-helper.c" ]; then
-    echo "Compiling ksystemstats-ns-helper binary (C / Cortex-A76)..."
-    "${CC_BIN}" -O2 -pipe -Wall -Wextra -march=armv8.2-a+crypto+fp16+dotprod -mtune=cortex-a76 "${EXTRAS_SRC_DIR}/ksystemstats-rpi5-fix/usr/src/ksystemstats-ns-helper.c" -o "${EXTRAS_SRC_DIR}/ksystemstats-rpi5-fix/usr/bin/ksystemstats-ns-helper"
+    echo "Compiling ksystemstats-ns-helper binary (C / Cortex-A76 + LTO + Vectorize)..."
+    "${CC_BIN}" -O2 -pipe -Wall -Wextra -march=armv8.2-a+crypto+fp16+dotprod -mtune=cortex-a76 -ftree-vectorize -flto=auto -ffat-lto-objects "${EXTRAS_SRC_DIR}/ksystemstats-rpi5-fix/usr/src/ksystemstats-ns-helper.c" -o "${EXTRAS_SRC_DIR}/ksystemstats-rpi5-fix/usr/bin/ksystemstats-ns-helper"
     "${STRIP_BIN}" "${EXTRAS_SRC_DIR}/ksystemstats-rpi5-fix/usr/bin/ksystemstats-ns-helper"
 fi
 
