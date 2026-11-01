@@ -30,9 +30,6 @@ resolve_bus_num() {
 
 case "$ACTION" in
     start)
-        modprobe ddcci 2>/dev/null || true
-        modprobe ddcci-backlight 2>/dev/null || true
-
         BUS_NUM=""
         for _ in 1 2 3 4 5 6 7 8 9 10; do
             BUS_NUM=$(resolve_bus_num || true)
@@ -42,17 +39,19 @@ case "$ACTION" in
 
         if [ -n "$BUS_NUM" ]; then
             DEV_PATH="/sys/bus/i2c/devices/i2c-${BUS_NUM}"
-            if [ -d "$DEV_PATH" ]; then
-                # Self-healing: if i2c client exists but ddcci driver failed or backlight missing, reset
-                if [ -e "${DEV_PATH}/${BUS_NUM}-0037" ] && [ ! -d "/sys/class/backlight/ddcci${BUS_NUM}" ]; then
-                    echo "0x37" > "${DEV_PATH}/delete_device" 2>/dev/null || true
+            # Only perform initialization if backlight device is not already present and working
+            if [ ! -d "/sys/class/backlight/ddcci${BUS_NUM}" ]; then
+                modprobe ddcci 2>/dev/null || true
+                modprobe ddcci-backlight 2>/dev/null || true
+
+                # If stale ddcci bus entry exists without backlight, clean reset modules
+                if [ -e "/sys/bus/ddcci/devices/ddcci${BUS_NUM}" ]; then
                     modprobe -r ddcci_backlight ddcci 2>/dev/null || true
                     modprobe ddcci 2>/dev/null || true
                     modprobe ddcci-backlight 2>/dev/null || true
-                    sleep 0.2
                 fi
 
-                if [ ! -e "${DEV_PATH}/${BUS_NUM}-0037" ]; then
+                if [ -d "$DEV_PATH" ] && [ ! -e "${DEV_PATH}/${BUS_NUM}-0037" ]; then
                     echo "ddcci 0x37" > "${DEV_PATH}/new_device" 2>/dev/null || true
                     logger -t argon-backlight-init "Attached ddcci 0x37 to i2c-${BUS_NUM} -> /sys/class/backlight created"
                 fi
