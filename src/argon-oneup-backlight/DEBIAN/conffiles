@@ -1,3 +1,4 @@
+/etc/modprobe.d/argon-backlight.conf
 /etc/modules-load.d/argon-backlight.conf
 /etc/udev/rules.d/99-argon-backlight.rules
 /etc/systemd/system/argon-backlight.service

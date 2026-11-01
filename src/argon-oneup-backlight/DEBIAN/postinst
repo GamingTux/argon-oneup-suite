@@ -7,6 +7,7 @@ if [ "$(stat -c %d:%i / 2>/dev/null)" = "$(stat -c %d:%i /proc/1/root/. 2>/dev/n
     udevadm control --reload-rules 2>/dev/null || true
     systemctl start argon-backlight.service 2>/dev/null || /usr/sbin/argon-backlight-init start 2>/dev/null || true
     udevadm trigger --subsystem-match=backlight 2>/dev/null || true
+    [ -w /sys/module/ddcci/parameters/delay ] && echo 0 > /sys/module/ddcci/parameters/delay 2>/dev/null || true
 fi
 
 echo "[argon-oneup-backlight] Backlight driver installed and initialized successfully!"
