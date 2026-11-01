@@ -1,5 +1,5 @@
 Package: argon-oneup-backlight
-Version: 1.3.3
+Version: 1.3.4
 Architecture: all
 Maintainer: GamingTux <gamingtux@users.noreply.github.com>
 Depends: ddcci-dkms (>= 0.4.5)

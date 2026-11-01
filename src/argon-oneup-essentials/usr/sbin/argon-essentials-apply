@@ -45,47 +45,14 @@ apply_runtime_perf() {
         echo 1000 > "$su_dir/rate_limit_us" 2>/dev/null || true
     done
 
-    # 3. Spread heavy ARM64 GICv2 Level IRQs across CPU0..CPU3
-    #    CPU0: RP1 Southbridge (xHCI USB 3.0, I2C)
-    #    CPU1: dwc2_hsotg (internal keyboard, touchpad, webcam, C-Media USB audio)
-    #    CPU2: v3d (VideoCore VII 3D GPU)
-    #    CPU3: vc4/hvs (1920x1200 display pipeline) & mmc0/mmc1 (SD/eMMC & Wi-Fi SDIO)
-    for irq_dir in /proc/irq/[0-9]*; do
-        [ -d "$irq_dir" ] || continue
-        aff_file="$irq_dir/smp_affinity_list"
-        [ -w "$aff_file" ] || continue
-        for action_dir in "$irq_dir"/*; do
-            [ -d "$action_dir" ] || continue
-            name=$(basename "$action_dir")
-            case "$name" in
-                *dwc2*)
-                    echo 1 > "$aff_file" 2>/dev/null || true
-                    break
-                    ;;
-                *v3d*)
-                    echo 2 > "$aff_file" 2>/dev/null || true
-                    break
-                    ;;
-                *vc4*|*hvs*|*mmc0*|*mmc1*)
-                    echo 3 > "$aff_file" 2>/dev/null || true
-                    break
-                    ;;
-                *rp1*|*xhci*)
-                    echo 0 > "$aff_file" 2>/dev/null || true
-                    break
-                    ;;
-            esac
-        done
-    done
-
-    # 4. Enable 4-Core Receive Packet Steering (RPS/RFS) on active network interfaces
+    # 3. Enable 4-Core Receive Packet Steering (RPS/RFS) on active network interfaces
     for rx_dir in /sys/class/net/wlan*/queues/rx-0 /sys/class/net/eth*/queues/rx-0; do
         [ -d "$rx_dir" ] || continue
         echo f > "$rx_dir/rps_cpus" 2>/dev/null || true
         echo 4096 > "$rx_dir/rps_flow_cnt" 2>/dev/null || true
     done
 
-    # 5. Put unpopulated CM5 Gigabit Ethernet PHY into MDIO BMCR_PDOWN suspend
+    # 4. Put unpopulated CM5 Gigabit Ethernet PHY into MDIO BMCR_PDOWN suspend
     #    Only bring eth0 down if it is the internal RP1 macb controller and has no active link/IP
     if [ "${DISABLE_UNUSED_ETHERNET:-1}" = "1" ] && [ -d /sys/class/net/eth0 ]; then
         ETH_DRV=$(basename "$(readlink -f /sys/class/net/eth0/device/driver 2>/dev/null)" 2>/dev/null || true)
@@ -141,6 +108,13 @@ fi
 rm -f /boot/firmware/overlays/cm5-disable-ethernet.dtbo /boot/overlays/cm5-disable-ethernet.dtbo 2>/dev/null || true
 rm -f /etc/sysctl.d/90-argon-oneup-essentials.conf 2>/dev/null || true
 rm -f /etc/udev/rules.d/90-lmpe-runtime.rules /usr/sbin/lmpe-runtime-tune /etc/udev/rules.d/60-ondemand-governor.rules /etc/NetworkManager/conf.d/99-lmpe-wifi-powersave-off.conf 2>/dev/null || true
+rm -f /usr/bin/argon-oneup-irq-policy 2>/dev/null || true
+if [ -f /etc/default/irqbalance ] && grep -q "argon-oneup-irq-policy" /etc/default/irqbalance; then
+    sed -i '/argon-oneup-irq-policy/d' /etc/default/irqbalance 2>/dev/null || true
+    if ! is_chroot; then
+        systemctl try-restart irqbalance.service 2>/dev/null || true
+    fi
+fi
 if [ -f /etc/ddcutil/ddcutilrc ]; then
     rm -f /etc/ddcutil/ddcutilrc 2>/dev/null || true
     rmdir --ignore-fail-on-non-empty /etc/ddcutil 2>/dev/null || true
@@ -193,17 +167,7 @@ if [ -n "$BOOT_CFG" ] && [ -f "$BOOT_CFG" ]; then
     } >> "$BOOT_CFG"
 fi
 
-# Configure irqbalance policy script if irqbalance is installed
-if [ -f /etc/default/irqbalance ] && [ -x /usr/bin/argon-oneup-irq-policy ]; then
-    if ! grep -q "argon-oneup-irq-policy" /etc/default/irqbalance; then
-        echo 'IRQBALANCE_ARGS="--policyscript=/usr/bin/argon-oneup-irq-policy"' >> /etc/default/irqbalance
-        if ! is_chroot; then
-            systemctl try-restart irqbalance.service 2>/dev/null || true
-        fi
-    fi
-fi
-
-# Apply runtime CPU/IRQ/RPS/eth0 optimizations immediately (skipped inside chroot)
+# Apply runtime CPU/RPS/eth0 optimizations immediately (skipped inside chroot)
 apply_runtime_perf
 
 # Configure PSU_MAX_CURRENT=5000, POWER_OFF_ON_HALT=1, SDRAM_BANKLOW=1 in EEPROM if supported on live hardware
