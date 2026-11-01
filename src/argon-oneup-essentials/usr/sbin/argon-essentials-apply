@@ -125,10 +125,6 @@ remove_runtime_tweaks() {
     if [ -L /etc/systemd/system/systemd-networkd-wait-online.service ]; then
         rm -f /etc/systemd/system/systemd-networkd-wait-online.service 2>/dev/null || true
     fi
-    if [ -f /etc/xdg/labwc/rc.xml ] && grep -q "argon-brightness-step" /etc/xdg/labwc/rc.xml; then
-        sed -i '/<keybind key="XF86MonBrightnessUp">/,/<\/keybind>/d; /<keybind key="XF86MonBrightnessDown">/,/<\/keybind>/d' /etc/xdg/labwc/rc.xml 2>/dev/null || true
-        pkill -HUP labwc 2>/dev/null || true
-    fi
     if [ -f /etc/default/irqbalance ] && grep -q "argon-oneup-irq-policy" /etc/default/irqbalance; then
         sed -i '/argon-oneup-irq-policy/d' /etc/default/irqbalance 2>/dev/null || true
         systemctl try-restart irqbalance.service 2>/dev/null || true
@@ -216,24 +212,6 @@ if ! is_chroot && [ -x /usr/sbin/argononeup-eepromconfig.py ] && command -v rpi-
     /usr/sbin/argononeup-eepromconfig.py >/dev/null 2>&1 || true
 fi
 
-# Bind XF86MonBrightnessUp/Down in labwc on Standard Raspberry Pi OS if present
-if [ -f /etc/xdg/labwc/rc.xml ] && ! grep -q "XF86MonBrightnessUp" /etc/xdg/labwc/rc.xml; then
-    sed -i '/<keybind key="XF86AudioMute">/i \    <keybind key="XF86MonBrightnessUp">\n      <action name="Execute" command="argon-brightness-step +10" />\n    </keybind>\n    <keybind key="XF86MonBrightnessDown">\n      <action name="Execute" command="argon-brightness-step -10" />\n    </keybind>' /etc/xdg/labwc/rc.xml 2>/dev/null || true
-    if ! is_chroot; then
-        pkill -HUP labwc 2>/dev/null || true
-    fi
-fi
-
-# Enable Subpixel RGB Font Rendering & LCD Filter for crisp text on the 14" BOE IPS panel
-if [ -d /etc/fonts/conf.d ] && [ -d /usr/share/fontconfig/conf.avail ]; then
-    rm -f /etc/fonts/conf.d/10-sub-pixel-none.conf 2>/dev/null || true
-    if [ -f /usr/share/fontconfig/conf.avail/10-sub-pixel-rgb.conf ]; then
-        ln -sf /usr/share/fontconfig/conf.avail/10-sub-pixel-rgb.conf /etc/fonts/conf.d/10-sub-pixel-rgb.conf 2>/dev/null || true
-    fi
-    if [ -f /usr/share/fontconfig/conf.avail/11-lcdfilter-default.conf ]; then
-        ln -sf /usr/share/fontconfig/conf.avail/11-lcdfilter-default.conf /etc/fonts/conf.d/11-lcdfilter-default.conf 2>/dev/null || true
-    fi
-fi
 
 # Apply sysctl and BBR runtime optimizations immediately (skipped inside chroot)
 if ! is_chroot; then

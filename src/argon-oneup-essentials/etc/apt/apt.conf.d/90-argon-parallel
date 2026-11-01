@@ -1,2 +1,0 @@
-APT::Acquire::Queue-Mode "host";
-APT::Acquire::Retries "3";
