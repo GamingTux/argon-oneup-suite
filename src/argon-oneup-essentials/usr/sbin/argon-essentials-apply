@@ -51,6 +51,13 @@ elif [ -f /boot/config.txt ]; then
     BOOT_CFG="/boot/config.txt"
 fi
 
+CMDLINE_TXT=""
+if [ -f /boot/firmware/cmdline.txt ]; then
+    CMDLINE_TXT="/boot/firmware/cmdline.txt"
+elif [ -f /boot/cmdline.txt ]; then
+    CMDLINE_TXT="/boot/cmdline.txt"
+fi
+
 remove_block() {
     if [ -n "$BOOT_CFG" ] && [ -f "$BOOT_CFG" ]; then
         sed -i '/^# --- BEGIN ARGON-ONEUP-ESSENTIALS ---$/,/^# --- END ARGON-ONEUP-ESSENTIALS ---$/d' "$BOOT_CFG" 2>/dev/null || true
@@ -184,6 +191,15 @@ if [ -n "$BOOT_CFG" ] && [ -f "$BOOT_CFG" ]; then
         fi
         echo "# --- END ARGON-ONEUP-ESSENTIALS ---"
     } >> "$BOOT_CFG"
+fi
+
+# Remove unrouted serial0 console from cmdline.txt when UART0 is disabled
+if [ -n "$CMDLINE_TXT" ] && [ -f "$CMDLINE_TXT" ]; then
+    if [ "${DISABLE_UART:-1}" = "1" ]; then
+        if grep -q "console=serial0" "$CMDLINE_TXT" 2>/dev/null; then
+            sed -i -E 's/(^|[[:space:]]+)console=serial0(,[0-9]+)?([[:space:]]+|$)/ /g; s/^[[:space:]]+//; s/[[:space:]]+$//' "$CMDLINE_TXT" 2>/dev/null || true
+        fi
+    fi
 fi
 
 # Suspend unpopulated eth0 PHY immediately if configured
