@@ -1,0 +1,3 @@
+# Allow Cinnamon/LMPE brightness slider and Fn hotkeys to scale all the way down to 0% (off)
+[org.cinnamon.settings-daemon.plugins.power]
+minimum-display-brightness=0

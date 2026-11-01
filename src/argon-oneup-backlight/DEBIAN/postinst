@@ -7,6 +7,9 @@ if [ "$(stat -c %d:%i / 2>/dev/null)" = "$(stat -c %d:%i /proc/1/root/. 2>/dev/n
     udevadm control --reload-rules 2>/dev/null || true
     systemctl restart argon-backlight.service 2>/dev/null || /usr/sbin/argon-backlight-init start 2>/dev/null || true
     udevadm trigger --subsystem-match=backlight 2>/dev/null || true
+    if command -v glib-compile-schemas >/dev/null 2>&1; then
+        glib-compile-schemas /usr/share/glib-2.0/schemas 2>/dev/null || true
+    fi
 fi
 
 echo "[argon-oneup-backlight] Backlight driver installed and initialized successfully!"
