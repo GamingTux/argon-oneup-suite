@@ -21,7 +21,7 @@ concurrency:
 jobs:
   build-and-deploy:
     name: Build Packages, APT Repo & Release
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -31,7 +31,10 @@ jobs:
       - name: Install build tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y dpkg-dev apt-utils shellcheck python3 gcc-aarch64-linux-gnu device-tree-compiler
+          sudo apt-get install -y build-essential dpkg-dev apt-utils shellcheck python3 device-tree-compiler
+          if [ "$(uname -m)" != "aarch64" ]; then
+            sudo apt-get install -y gcc-aarch64-linux-gnu
+          fi
 
       - name: Syntax & Lint check
         run: |
@@ -70,6 +73,30 @@ jobs:
             dpkg-deb -c "$deb"
           done
 
+      - name: Generate Build Summary Dashboard
+        if: always()
+        run: |
+          echo "## ⚡ Argon ONE UP Suite – Build & Package Status" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Architecture / Runner:** \`$(uname -m)\` ($(lsb_release -ds 2>/dev/null || cat /etc/os-release | grep PRETTY_NAME | cut -d= -f2 | tr -d '\"'))" >> $GITHUB_STEP_SUMMARY
+          echo "- **Ref:** \`${{ github.ref }}\` (\`${{ github.sha }}\`)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Paket | Architektur | Version | Größe |" >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|---|---|" >> $GITHUB_STEP_SUMMARY
+          for deb in dist/*.deb dist/extras/*.deb; do
+            [ -f "$deb" ] || continue
+            pkg_name=$(dpkg-deb -f "$deb" Package)
+            pkg_ver=$(dpkg-deb -f "$deb" Version)
+            pkg_arch=$(dpkg-deb -f "$deb" Architecture)
+            pkg_size=$(du -h "$deb" | awk '{print $1}')
+            echo "| \`$pkg_name\` | \`$pkg_arch\` | \`$pkg_ver\` | $pkg_size |" >> $GITHUB_STEP_SUMMARY
+          done
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🔒 SHA256 Checksums" >> $GITHUB_STEP_SUMMARY
+          echo '```text' >> $GITHUB_STEP_SUMMARY
+          cat dist/SHA256SUMS >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
       - name: Import GPG Key for APT Signing
         if: env.APT_GPG_KEY != ''
         env:
@@ -90,7 +117,7 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./public
           publish_branch: gh-pages
-          keep_files: false
+          force_orphan: true
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
