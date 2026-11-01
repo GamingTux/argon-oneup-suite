@@ -59,14 +59,50 @@ find "${SRC_DIR}" "${EXTRAS_SRC_DIR}" -type f -not -perm -0100 -exec chmod 0644 
 find "${SRC_DIR}" "${EXTRAS_SRC_DIR}" -path "*/DEBIAN/post*" -exec chmod 0755 {} +
 find "${SRC_DIR}" "${EXTRAS_SRC_DIR}" -path "*/DEBIAN/pre*" -exec chmod 0755 {} +
 
+GIT_COMMIT_COUNT=$(git rev-list --count HEAD 2>/dev/null || echo "")
+GIT_SHORT_HASH=$(git rev-parse --short HEAD 2>/dev/null || echo "")
+EXACT_TAG=$(git describe --tags --exact-match 2>/dev/null || echo "")
+
+GIT_SUFFIX=""
+if [ -z "${EXACT_TAG}" ] && [ -n "${GIT_COMMIT_COUNT}" ] && [ -n "${GIT_SHORT_HASH}" ]; then
+    GIT_SUFFIX="+git${GIT_COMMIT_COUNT}.${GIT_SHORT_HASH}"
+    echo "=== Rolling Continuous Delivery: Version suffix ${GIT_SUFFIX} ==="
+else
+    echo "=== Release Build: Clean versions from control files (Tag: ${EXACT_TAG:-none}) ==="
+fi
+
+package_dir() {
+    local src_path="$1"
+    local dest_dir="$2"
+    local pkg="$3"
+
+    local arch
+    arch=$(grep "^Architecture:" "${src_path}/DEBIAN/control" | awk '{print $2}')
+    local base_ver
+    base_ver=$(grep "^Version:" "${src_path}/DEBIAN/control" | awk '{print $2}')
+    local final_ver="${base_ver}${GIT_SUFFIX}"
+    local deb_name="${pkg}_${final_ver}_${arch}.deb"
+
+    echo "Building package: ${pkg} (${final_ver} [${arch}])..."
+
+    local stage_dir
+    stage_dir=$(mktemp -d)
+    cp -a "${src_path}" "${stage_dir}/${pkg}"
+
+    if [ -n "${GIT_SUFFIX}" ]; then
+        sed -i "s/^Version: .*/Version: ${final_ver}/" "${stage_dir}/${pkg}/DEBIAN/control"
+        sed -i "s/argon-power-profiles (= [^)]*)/argon-power-profiles (= ${final_ver})/" "${stage_dir}/${pkg}/DEBIAN/control" 2>/dev/null || true
+        sed -i "s/argon-power-profiles (<< [^)]*)/argon-power-profiles (<< ${final_ver})/" "${stage_dir}/${pkg}/DEBIAN/control" 2>/dev/null || true
+    fi
+
+    dpkg-deb --root-owner-group -b "${stage_dir}/${pkg}" "${dest_dir}/${deb_name}"
+    rm -rf "${stage_dir}"
+}
+
 for pkg in argon-oneup-essentials argon-oneup-backlight argon-oneup-battery argon-oneup-lid argon-oneup-sensors argon-oneup-power-profiles argon-oneup-suite; do
     PKG_PATH="${SRC_DIR}/${pkg}"
     if [ -d "${PKG_PATH}" ]; then
-        echo "Building core package: ${pkg}..."
-        ARCH=$(grep "^Architecture:" "${PKG_PATH}/DEBIAN/control" | awk '{print $2}')
-        VER=$(grep "^Version:" "${PKG_PATH}/DEBIAN/control" | awk '{print $2}')
-        DEB_NAME="${pkg}_${VER}_${ARCH}.deb"
-        dpkg-deb --root-owner-group -b "${PKG_PATH}" "${DIST_DIR}/${DEB_NAME}"
+        package_dir "${PKG_PATH}" "${DIST_DIR}" "${pkg}"
     fi
 done
 
@@ -75,11 +111,7 @@ echo "=== Building Argon ONE UP Extras (Optional Fixes, Standby, Widgets & Apple
 for pkg in argon-oneup-plasma-widget argon-wfplug-batt cm5-mmc-fix rpi-fake-sleep ksystemstats-rpi5-fix rpi-pishutdown; do
     PKG_PATH="${EXTRAS_SRC_DIR}/${pkg}"
     if [ -d "${PKG_PATH}" ]; then
-        echo "Building extra: ${pkg}..."
-        ARCH=$(grep "^Architecture:" "${PKG_PATH}/DEBIAN/control" | awk '{print $2}')
-        VER=$(grep "^Version:" "${PKG_PATH}/DEBIAN/control" | awk '{print $2}')
-        DEB_NAME="${pkg}_${VER}_${ARCH}.deb"
-        dpkg-deb --root-owner-group -b "${PKG_PATH}" "${DIST_DIR}/extras/${DEB_NAME}"
+        package_dir "${PKG_PATH}" "${EXTRAS_DIST_DIR}" "${pkg}"
     fi
 done
 
