@@ -94,7 +94,6 @@ rm -f /etc/pipewire/pipewire.conf.d/10-audio-tuning.conf 2>/dev/null || true
 rm -f /etc/modprobe.d/argon-webcam-audio.conf /etc/modprobe.d/argon-hardware-blacklist.conf 2>/dev/null || true
 rm -f /etc/wireplumber/wireplumber.conf.d/50-disable-internal-hdmi-audio.conf 2>/dev/null || true
 rm -f /etc/NetworkManager/conf.d/90-argon-oneup-wifi.conf 2>/dev/null || true
-rm -f /etc/udev/rules.d/90-lmpe-runtime.rules /usr/sbin/lmpe-runtime-tune /etc/udev/rules.d/60-ondemand-governor.rules /etc/NetworkManager/conf.d/99-lmpe-wifi-powersave-off.conf 2>/dev/null || true
 rm -f /usr/bin/argon-oneup-irq-policy 2>/dev/null || true
 if [ -f /etc/argon-oneup-essentials.conf ] && [ -f /etc/argon-oneup.conf ]; then
     rm -f /etc/argon-oneup-essentials.conf 2>/dev/null || true
