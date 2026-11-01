@@ -5,13 +5,11 @@ CONF_FILE="/etc/argon-oneup-essentials.conf"
 ARM_FREQ=2800
 ENABLE_ANT2=1
 ENABLE_NVME_GEN3=1
-ENABLE_USB_HOST_AND_MAX_CURRENT=1
-DISABLE_UNUSED_ETHERNET=1
 ENABLE_FAN_CURVE=1
 DISABLE_CAMERA_PROBE=1
 DISABLE_DISPLAY_PROBE=1
 DISABLE_UART=1
-OPTIMIZE_FSTAB_FSCK=1
+DISABLE_UNUSED_ETHERNET=1
 
 if [ -f "$CONF_FILE" ]; then
     # shellcheck disable=SC1090
@@ -22,42 +20,12 @@ is_chroot() {
     [ "$(stat -c %d:%i / 2>/dev/null)" != "$(stat -c %d:%i /proc/1/root/. 2>/dev/null)" ]
 }
 
-apply_runtime_perf() {
+apply_runtime_eth() {
     if is_chroot; then
         return 0
     fi
-
-    # 1. Pre-tune ondemand governor parameters (in case ondemand is selected)
-    for od_dir in /sys/devices/system/cpu/cpufreq/ondemand /sys/devices/system/cpu/cpufreq/policy*/ondemand; do
-        [ -d "$od_dir" ] || continue
-        echo 10000 > "$od_dir/sampling_rate" 2>/dev/null || true
-        echo 25 > "$od_dir/up_threshold" 2>/dev/null || true
-        echo 10 > "$od_dir/sampling_down_factor" 2>/dev/null || true
-        echo 1 > "$od_dir/io_is_busy" 2>/dev/null || true
-    done
-
-    # 2. Switch default governor from sluggish ondemand (100ms) to scheduler-driven schedutil (1ms)
-    for gov_file in /sys/devices/system/cpu/cpufreq/policy*/scaling_governor; do
-        [ -f "$gov_file" ] || continue
-        cur_gov=$(cat "$gov_file" 2>/dev/null || true)
-        if [ "$cur_gov" = "ondemand" ] || [ -z "$cur_gov" ]; then
-            echo schedutil > "$gov_file" 2>/dev/null || true
-        fi
-    done
-    for su_dir in /sys/devices/system/cpu/cpufreq/schedutil /sys/devices/system/cpu/cpufreq/policy*/schedutil; do
-        [ -d "$su_dir" ] || continue
-        echo 1000 > "$su_dir/rate_limit_us" 2>/dev/null || true
-    done
-
-    # 3. Enable 4-Core Receive Packet Steering (RPS/RFS) on active network interfaces
-    for rx_dir in /sys/class/net/wlan*/queues/rx-0 /sys/class/net/eth*/queues/rx-0; do
-        [ -d "$rx_dir" ] || continue
-        echo f > "$rx_dir/rps_cpus" 2>/dev/null || true
-        echo 4096 > "$rx_dir/rps_flow_cnt" 2>/dev/null || true
-    done
-
-    # 4. Put unpopulated CM5 Gigabit Ethernet PHY into MDIO BMCR_PDOWN suspend
-    #    Only bring eth0 down if it is the internal RP1 macb controller and has no active link/IP
+    # Put unpopulated CM5 Gigabit Ethernet PHY into MDIO BMCR_PDOWN suspend (-0.3W)
+    # Only bring eth0 down if it is the internal RP1 macb controller and has no active link/IP
     if [ "${DISABLE_UNUSED_ETHERNET:-1}" = "1" ] && [ -d /sys/class/net/eth0 ]; then
         ETH_DRV=$(basename "$(readlink -f /sys/class/net/eth0/device/driver 2>/dev/null)" 2>/dev/null || true)
         ETH_CARRIER=$(cat /sys/class/net/eth0/carrier 2>/dev/null || echo 0)
@@ -68,7 +36,7 @@ apply_runtime_perf() {
 }
 
 if [ "${1:-}" = "--runtime" ]; then
-    apply_runtime_perf
+    apply_runtime_eth
     exit 0
 fi
 
@@ -108,9 +76,17 @@ if [ "${1:-}" = "--remove" ]; then
     exit 0
 fi
 
-# Clean up obsolete files from older package versions
+# Clean up obsolete files from older package versions that were moved to the base OS image
 rm -f /boot/firmware/overlays/cm5-disable-ethernet.dtbo /boot/overlays/cm5-disable-ethernet.dtbo 2>/dev/null || true
-rm -f /etc/sysctl.d/90-argon-oneup-essentials.conf 2>/dev/null || true
+rm -f /etc/sysctl.d/90-argon-oneup-essentials.conf /etc/sysctl.d/99-z-argon-oneup-essentials.conf 2>/dev/null || true
+rm -f /etc/modules-load.d/argon-bbr.conf 2>/dev/null || true
+rm -f /etc/systemd/zram-generator.conf.d/90-argon-oneup.conf 2>/dev/null || true
+rm -f /etc/systemd/journald.conf.d/90-argon-oneup.conf 2>/dev/null || true
+rm -f /etc/systemd/system/fstrim.timer.d/acpower.conf 2>/dev/null || true
+rm -f /etc/profile.d/cm5-cortex-a76.sh 2>/dev/null || true
+rm -f /etc/udev/rules.d/90-argon-storage-io.rules 2>/dev/null || true
+rm -f /etc/X11/xorg.conf.d/99-v3d.conf 2>/dev/null || true
+rm -f /etc/pipewire/pipewire.conf.d/10-audio-tuning.conf 2>/dev/null || true
 rm -f /etc/udev/rules.d/90-lmpe-runtime.rules /usr/sbin/lmpe-runtime-tune /etc/udev/rules.d/60-ondemand-governor.rules /etc/NetworkManager/conf.d/99-lmpe-wifi-powersave-off.conf 2>/dev/null || true
 rm -f /usr/bin/argon-oneup-irq-policy 2>/dev/null || true
 if [ -f /etc/default/irqbalance ] && grep -q "argon-oneup-irq-policy" /etc/default/irqbalance; then
@@ -151,16 +127,6 @@ if [ -n "$BOOT_CFG" ] && [ -f "$BOOT_CFG" ]; then
         HAS_I2C_ARM=1
     fi
 
-    HAS_DWC2=0
-    if grep -q "^[[:space:]]*dtoverlay=dwc2" "$BOOT_CFG" 2>/dev/null; then
-        HAS_DWC2=1
-    fi
-
-    HAS_USB_MAX=0
-    if grep -q "^[[:space:]]*usb_max_current_enable=1" "$BOOT_CFG" 2>/dev/null; then
-        HAS_USB_MAX=1
-    fi
-
     {
         echo "# --- BEGIN ARGON-ONEUP-ESSENTIALS ---"
         echo "[all]"
@@ -189,14 +155,6 @@ if [ -n "$BOOT_CFG" ] && [ -f "$BOOT_CFG" ]; then
         if [ "${ENABLE_ANT2:-1}" = "1" ]; then
             echo "dtparam=ant2"
         fi
-        if [ "${ENABLE_USB_HOST_AND_MAX_CURRENT:-1}" = "1" ]; then
-            if [ "$HAS_USB_MAX" = "0" ]; then
-                echo "usb_max_current_enable=1"
-            fi
-            if [ "$HAS_DWC2" = "0" ]; then
-                echo "dtoverlay=dwc2,dr_mode=host"
-            fi
-        fi
         if [ -n "$ARM_FREQ" ] && [ "$ARM_FREQ" -gt 0 ] 2>/dev/null; then
             echo "arm_freq=${ARM_FREQ}"
         fi
@@ -218,46 +176,12 @@ if [ -n "$BOOT_CFG" ] && [ -f "$BOOT_CFG" ]; then
     } >> "$BOOT_CFG"
 fi
 
-# Disable boot-time fsck on FAT32 /boot/firmware partition to eliminate ~250-300ms boot delay
-if [ "${OPTIMIZE_FSTAB_FSCK:-1}" = "1" ] && [ -f /etc/fstab ]; then
-    sed -i -E 's#^([[:space:]]*[^#[:space:]]+[[:space:]]+(/boot/firmware|/boot)[[:space:]]+vfat[[:space:]]+[^[:space:]]+[[:space:]]+[0-9]+[[:space:]]+)2#\10#' /etc/fstab 2>/dev/null || true
-fi
-
-# Apply runtime CPU/RPS/eth0 optimizations immediately (skipped inside chroot)
-apply_runtime_perf
+# Suspend unpopulated eth0 PHY immediately if configured
+apply_runtime_eth
 
 # Configure PSU_MAX_CURRENT=5000, POWER_OFF_ON_HALT=1, SDRAM_BANKLOW=1 in EEPROM if supported on live hardware
 if ! is_chroot && [ -x /usr/sbin/argononeup-eepromconfig.py ] && command -v rpi-eeprom-config >/dev/null 2>&1; then
     /usr/sbin/argononeup-eepromconfig.py >/dev/null 2>&1 || true
-fi
-
-
-# Apply sysctl and BBR runtime optimizations immediately (skipped inside chroot)
-if ! is_chroot; then
-    modprobe tcp_bbr 2>/dev/null || true
-    sysctl --system >/dev/null 2>&1 || true
-fi
-
-# Disable disk swapfile wear if systemd-zram-generator is present
-if [ -d /lib/systemd/system-generators ] && [ -x /lib/systemd/system-generators/zram-generator ]; then
-    if [ -f /etc/rpi/swap.conf ]; then
-        sed -i 's/^#*Mechanism=.*/Mechanism=none/' /etc/rpi/swap.conf 2>/dev/null || true
-    fi
-    mkdir -p /etc/systemd/zram-generator.conf.d
-    if [ ! -e /etc/systemd/zram-generator.conf.d/20-rpi-swap-zram0-ctrl.conf ]; then
-        ln -sf /dev/null /etc/systemd/zram-generator.conf.d/20-rpi-swap-zram0-ctrl.conf 2>/dev/null || true
-    fi
-fi
-
-# Prevent boot delays waiting for network online targets on mobile Wi-Fi laptop
-if [ -d /etc/systemd/system ]; then
-    ln -sf /dev/null /etc/systemd/system/NetworkManager-wait-online.service 2>/dev/null || true
-    ln -sf /dev/null /etc/systemd/system/systemd-networkd-wait-online.service 2>/dev/null || true
-fi
-
-if ! is_chroot && command -v udevadm >/dev/null 2>&1; then
-    udevadm control --reload-rules 2>/dev/null || true
-    udevadm trigger --subsystem-match=block 2>/dev/null || true
 fi
 
 exit 0
