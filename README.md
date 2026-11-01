@@ -191,10 +191,11 @@ cd argon-oneup-suite
 
 ## 🤝 Upstream Open-Source Contributions
 
-Issues discovered and fixed during the development of this suite have been contributed back upstream to the Raspberry Pi ecosystem:
+Issues discovered and fixed during the development of this suite have been contributed back upstream to the Raspberry Pi and Argon ONE UP ecosystem:
 * **Raspberry Pi Linux Kernel (`vc4` Internal eDP Panel Support for CM4/CM5):** [Kernel PR #7732](https://github.com/raspberrypi/linux/pull/7732) (`drm/vc4: hdmi: Add Device Tree override for internal eDP panels on CM4/CM5`). Exposes internal HDMI laptop displays natively as `eDP-1` in KMS, fixing clamshell suspend, Wayland desktop crashes, and display brightness association.
 * **Raspberry Pi Linux Kernel (`vc4` HDMI HPD IRQ Storm Fix):** [Issue #7724](https://github.com/raspberrypi/linux/issues/7724) / [Kernel PR #7727](https://github.com/raspberrypi/linux/pull/7727) (`drm/vc4: hdmi: Only ignore hotplug interrupts on forced connectors`).
 * **Raspberry Pi OS Taskbar Battery Plugin (`pplug-batt`):** [PR #16](https://github.com/raspberrypi-ui/pplug-batt/pull/16) (Fix Cairo surface memory leak, read `capacity` and `time_to_empty_avg` sysfs nodes, add extended battery telemetry & German localization).
+* **Argon ONE UP Battery Kernel Driver (`oneUpPower`):** [PR #59](https://github.com/JeffCurless/argon-oneup/pull/59) (`oneUpPower: Add hardware cycle count, dynamic SOH, fractional SOC, and Linux-compliant health monitoring`). Brings the CW2217 fuel gauge driver into full compliance with Linux `power_supply` subsystem conventions, exposing hardware cycle counts, dynamic SOH cell degradation scaling, sub-percent SOC precision, and true 3S pack voltage.
 
 ---
 
