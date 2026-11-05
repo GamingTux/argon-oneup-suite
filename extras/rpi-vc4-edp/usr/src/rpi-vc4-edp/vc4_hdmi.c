@@ -64,6 +64,10 @@
 #include "vc4_hdmi_regs.h"
 #include "vc4_regs.h"
 
+static bool hdmi0_edp = false;
+module_param(hdmi0_edp, bool, 0644);
+MODULE_PARM_DESC(hdmi0_edp, "Expose HDMI0 as internal eDP panel");
+
 static bool hdmi1_edp = false;
 module_param(hdmi1_edp, bool, 0644);
 MODULE_PARM_DESC(hdmi1_edp, "Expose HDMI1 as internal eDP panel");
@@ -364,6 +368,53 @@ static int vc4_hdmi_reset_link(struct drm_connector *connector,
 	return drm_atomic_helper_reset_crtc(crtc, ctx);
 }
 
+static struct vc4_hdmi *vc4_internal_edp_hdmi;
+static bool vc4_edp_lid_closed;
+
+static bool vc4_hdmi_is_internal_edp(struct vc4_hdmi *vc4_hdmi)
+{
+	struct device_node *node = vc4_hdmi->pdev->dev.of_node;
+
+	if (of_property_read_bool(node, "raspberrypi,is-internal-panel"))
+		return true;
+
+	if (hdmi0_edp &&
+	    (of_device_is_compatible(node, "brcm,bcm2712-hdmi0") ||
+	     of_device_is_compatible(node, "brcm,bcm2711-hdmi0")))
+		return true;
+
+	if (hdmi1_edp &&
+	    (of_device_is_compatible(node, "brcm,bcm2712-hdmi1") ||
+	     of_device_is_compatible(node, "brcm,bcm2711-hdmi1")))
+		return true;
+
+	return false;
+}
+
+static bool vc4_hdmi_is_lid_closed(void)
+{
+	struct vc4_hdmi *edp = READ_ONCE(vc4_internal_edp_hdmi);
+	bool hp = true;
+
+	if (!edp)
+		return false;
+
+	if (READ_ONCE(vc4_edp_lid_closed))
+		return true;
+
+	if (pm_runtime_get_if_in_use(&edp->pdev->dev) > 0) {
+		if (edp->variant->hp_detect)
+			hp = edp->variant->hp_detect(edp);
+		pm_runtime_put(&edp->pdev->dev);
+		if (!hp) {
+			WRITE_ONCE(vc4_edp_lid_closed, true);
+			return true;
+		}
+	}
+
+	return false;
+}
+
 static void vc4_hdmi_handle_hotplug(struct vc4_hdmi *vc4_hdmi,
 				    struct drm_modeset_acquire_ctx *ctx,
 				    enum drm_connector_status status)
@@ -386,6 +437,7 @@ static void vc4_hdmi_handle_hotplug(struct vc4_hdmi *vc4_hdmi,
 	 */
 
 	drm_atomic_helper_connector_hdmi_hotplug(connector, status);
+	connector->display_info.color_formats |= DRM_COLOR_FORMAT_RGB444;
 
 	if (status != connector_status_connected)
 		return;
@@ -436,6 +488,26 @@ static int vc4_hdmi_connector_detect_ctx(struct drm_connector *connector,
 		if (vc4_hdmi->variant->hp_detect &&
 		    vc4_hdmi->variant->hp_detect(vc4_hdmi))
 			status = connector_status_connected;
+		else if (vc4_hdmi->ddc && drm_probe_ddc(vc4_hdmi->ddc))
+			status = connector_status_connected;
+	}
+
+	if (vc4_hdmi_is_internal_edp(vc4_hdmi)) {
+		WRITE_ONCE(vc4_edp_lid_closed, status != connector_status_connected);
+		if (status != connector_status_connected && connector->edid_blob_ptr) {
+			connector->display_info.color_formats |= DRM_COLOR_FORMAT_RGB444;
+			pm_runtime_put(&vc4_hdmi->pdev->dev);
+			return connector_status_connected;
+		}
+	} else if (status != connector_status_connected &&
+		   connector->edid_blob_ptr &&
+		   vc4_hdmi_is_lid_closed()) {
+		drm_info(connector->dev,
+			 "[vc4_hdmi] Keeping external %s connected while lid is closed\n",
+			 connector->name);
+		connector->display_info.color_formats |= DRM_COLOR_FORMAT_RGB444;
+		pm_runtime_put(&vc4_hdmi->pdev->dev);
+		return connector_status_connected;
 	}
 
 	vc4_hdmi_handle_hotplug(vc4_hdmi, ctx, status);
@@ -450,6 +522,7 @@ static int vc4_hdmi_connector_get_modes(struct drm_connector *connector)
 	int ret = 0;
 
 	ret = drm_edid_connector_add_modes(connector);
+	connector->display_info.color_formats |= DRM_COLOR_FORMAT_RGB444;
 
 	if (!vc4->hvs->vc5_hdmi_enable_hdmi_20) {
 		struct drm_device *drm = connector->dev;
@@ -514,6 +587,8 @@ static int vc4_hdmi_connector_atomic_check(struct drm_connector *connector,
 		crtc_state->mode_changed = true;
 	}
 
+	connector->display_info.color_formats |= DRM_COLOR_FORMAT_RGB444;
+
 	return drm_atomic_helper_connector_hdmi_check(connector, state);
 }
 
@@ -522,6 +597,7 @@ static void vc4_hdmi_connector_reset(struct drm_connector *connector)
 	drm_atomic_helper_connector_reset(connector);
 	__drm_atomic_helper_connector_hdmi_reset(connector, connector->state);
 	drm_atomic_helper_connector_tv_margins_reset(connector);
+	connector->display_info.color_formats |= DRM_COLOR_FORMAT_RGB444;
 }
 
 static const struct drm_connector_funcs vc4_hdmi_connector_funcs = {
@@ -542,27 +618,78 @@ static const struct drm_connector_helper_funcs vc4_hdmi_connector_helper_funcs =
 static const struct drm_connector_hdmi_funcs vc4_hdmi_hdmi_connector_funcs;
 static const struct drm_connector_hdmi_audio_funcs vc4_hdmi_audio_funcs;
 
+static int vc4_hdmi_connector_edp_init(struct drm_device *dev,
+				       struct drm_connector *connector,
+				       const char *vendor, const char *product,
+				       const struct drm_connector_funcs *funcs,
+				       const struct drm_connector_hdmi_funcs *hdmi_funcs,
+				       struct i2c_adapter *ddc,
+				       unsigned long supported_formats,
+				       unsigned int max_bpc)
+{
+	int ret;
+
+	ret = drmm_connector_init(dev, connector, funcs,
+				  DRM_MODE_CONNECTOR_eDP, ddc);
+	if (ret)
+		return ret;
+
+	connector->display_info.color_formats |= DRM_COLOR_FORMAT_RGB444;
+	connector->hdmi.supported_formats = supported_formats;
+	memcpy_and_pad(connector->hdmi.vendor, DRM_CONNECTOR_HDMI_VENDOR_LEN,
+		       vendor, strnlen(vendor, DRM_CONNECTOR_HDMI_VENDOR_LEN), 0);
+	memcpy_and_pad(connector->hdmi.product, DRM_CONNECTOR_HDMI_PRODUCT_LEN,
+		       product, strnlen(product, DRM_CONNECTOR_HDMI_PRODUCT_LEN), 0);
+
+	if (connector->funcs->reset)
+		connector->funcs->reset(connector);
+
+	drm_connector_attach_max_bpc_property(connector, 8, max_bpc);
+	connector->max_bpc = max_bpc;
+
+	if (max_bpc > 8)
+		drm_connector_attach_hdr_output_metadata_property(connector);
+
+	connector->hdmi.funcs = hdmi_funcs;
+
+	return 0;
+}
+
 static int vc4_hdmi_connector_init(struct drm_device *dev,
 				   struct vc4_hdmi *vc4_hdmi)
 {
 	struct drm_connector *connector = &vc4_hdmi->connector;
 	struct drm_encoder *encoder = &vc4_hdmi->encoder.base;
+	unsigned long formats = BIT(HDMI_COLORSPACE_RGB) |
+				BIT(HDMI_COLORSPACE_YUV422) |
+				BIT(HDMI_COLORSPACE_YUV444);
 	unsigned int max_bpc = 8;
 	int ret;
 
 	if (vc4_hdmi->variant->supports_hdr)
 		max_bpc = 12;
 
-	ret = drmm_connector_hdmi_init(dev, connector,
-				       "Broadcom", "Videocore",
-				       &vc4_hdmi_connector_funcs,
-				       &vc4_hdmi_hdmi_connector_funcs,
-				       DRM_MODE_CONNECTOR_HDMIA,
-				       vc4_hdmi->ddc,
-				       BIT(HDMI_COLORSPACE_RGB) |
-				       BIT(HDMI_COLORSPACE_YUV422) |
-				       BIT(HDMI_COLORSPACE_YUV444),
-				       max_bpc);
+	if (vc4_hdmi_is_internal_edp(vc4_hdmi)) {
+		ret = vc4_hdmi_connector_edp_init(dev, connector,
+						  "Broadcom", "Videocore",
+						  &vc4_hdmi_connector_funcs,
+						  &vc4_hdmi_hdmi_connector_funcs,
+						  vc4_hdmi->ddc,
+						  formats, max_bpc);
+		if (!ret) {
+			WRITE_ONCE(vc4_internal_edp_hdmi, vc4_hdmi);
+			drm_info(dev, "[vc4_hdmi] Initialized internal panel as %s (id=%d)\n",
+				 connector->name, connector->connector_type_id);
+		}
+	} else {
+		ret = drmm_connector_hdmi_init(dev, connector,
+					       "Broadcom", "Videocore",
+					       &vc4_hdmi_connector_funcs,
+					       &vc4_hdmi_hdmi_connector_funcs,
+					       DRM_MODE_CONNECTOR_HDMIA,
+					       vc4_hdmi->ddc,
+					       formats, max_bpc);
+	}
 	if (ret)
 		return ret;
 
@@ -571,22 +698,6 @@ static int vc4_hdmi_connector_init(struct drm_device *dev,
 					    8, 0, false, -1);
 	if (ret)
 		return ret;
-
-	if (hdmi1_edp || of_property_read_bool(vc4_hdmi->pdev->dev.of_node, "raspberrypi,is-internal-panel")) {
-		bool apply = of_property_read_bool(vc4_hdmi->pdev->dev.of_node, "raspberrypi,is-internal-panel");
-		if (!apply && hdmi1_edp) {
-			if (of_device_is_compatible(vc4_hdmi->pdev->dev.of_node, "brcm,bcm2712-hdmi1") ||
-			    of_device_is_compatible(vc4_hdmi->pdev->dev.of_node, "brcm,bcm2711-hdmi1"))
-				apply = true;
-		}
-		if (apply) {
-			connector->connector_type = DRM_MODE_CONNECTOR_eDP;
-			connector->connector_type_id = 1;
-			kfree(connector->name);
-			connector->name = kasprintf(GFP_KERNEL, "eDP-1");
-			printk(KERN_INFO "[vc4_hdmi] Configured internal eDP-1 panel\n");
-		}
-	}
 
 	drm_connector_helper_add(connector, &vc4_hdmi_connector_helper_funcs);
 
@@ -3325,6 +3436,7 @@ static int vc4_hdmi_dev_probe(struct platform_device *pdev)
 
 static void vc4_hdmi_dev_remove(struct platform_device *pdev)
 {
+	WRITE_ONCE(vc4_internal_edp_hdmi, NULL);
 	component_del(&pdev->dev, &vc4_hdmi_ops);
 }
 
