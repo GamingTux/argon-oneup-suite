@@ -5,6 +5,9 @@ if [ "$1" = "remove" ] || [ "$1" = "purge" ]; then
     for cfg in /boot/firmware/config.txt /boot/config.txt; do
         if [ -f "$cfg" ]; then
             sed -i '/^# --- BEGIN ARGON-ONEUP-ESSENTIALS ---$/,/^# --- END ARGON-ONEUP-ESSENTIALS ---$/d' "$cfg" 2>/dev/null || true
+            sed -i 's/^#camera_auto_detect=1 (handled by argon-oneup-essentials)/camera_auto_detect=1/' "$cfg" 2>/dev/null || true
+            sed -i 's/^#display_auto_detect=1 (handled by argon-oneup-essentials)/display_auto_detect=1/' "$cfg" 2>/dev/null || true
+            sed -i 's/^#dtparam=audio=on (obsolete on Pi 5\/CM5)/dtparam=audio=on/' "$cfg" 2>/dev/null || true
         fi
     done
 fi

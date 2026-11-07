@@ -1,5 +1,5 @@
 Package: argon-oneup-essentials
-Version: 1.4.0
+Version: 1.4.1
 Architecture: all
 Maintainer: GamingTux <gamingtux@users.noreply.github.com>
 Section: admin
@@ -12,4 +12,7 @@ Description: Essential hardware configuration and APT repository for Argon ONE U
   - M.2 NVMe PCIe Gen 3 full-speed mode (dtparam=nvme, pciex1_gen=3)
   - Hardware I2C bus enablement (dtparam=i2c_arm=on)
   - 4-stage quiet blower fan curve with 5C hysteresis
+  - Webcam audio endpoint quirk (eliminates 1.5s boot hang)
+  - Disables dummy CSI camera nodes (pisp_be) & silent internal HDMI audio sink
+  - Power saving standby for unused onboard CM5 Gigabit Ethernet PHY
   - Official APT archive keyring and sources list
