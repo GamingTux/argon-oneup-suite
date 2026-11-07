@@ -113,7 +113,7 @@ done
 
 echo "=== Building Argon ONE UP Extras (Optional Fixes, Standby, Widgets & Applets) ==="
 
-for pkg in argon-oneup-plasma-widget argon-wfplug-batt cm5-mmc-fix rpi-fake-sleep ksystemstats-rpi5-fix rpi-pishutdown rpi-vc4-edp; do
+for pkg in argon-oneup-plasma-widget argon-wfplug-batt cm5-mmc-fix ksystemstats-rpi5-fix rpi-pishutdown rpi-vc4-edp; do
     PKG_PATH="${EXTRAS_SRC_DIR}/${pkg}"
     if [ -d "${PKG_PATH}" ]; then
         package_dir "${PKG_PATH}" "${EXTRAS_DIST_DIR}" "${pkg}"

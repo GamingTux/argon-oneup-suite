@@ -344,9 +344,9 @@ def run_benchmark(duration=60):
     print("Starte 4-Kern stress-ng (Matrix-Multiplikation + RAM-Stress)...")
 
     orig_gov = read_file("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor", "schedutil")
-    had_state_file = os.path.exists("/run/rpi-fake-sleep.state")
+    had_state_file = os.path.exists("/run/rpi-suspend.state")
     try:
-        with open("/run/rpi-fake-sleep.state", "w") as f:
+        with open("/run/rpi-suspend.state", "w") as f:
             f.write("benchmark\n")
     except Exception:
         pass
@@ -464,9 +464,9 @@ def run_benchmark(duration=60):
             with open(f"{BL_PATH}/brightness", "w") as f:
                 f.write(orig_brightness)
         set_cpufreq_governor(orig_gov)
-        if not had_state_file and os.path.exists("/run/rpi-fake-sleep.state"):
+        if not had_state_file and os.path.exists("/run/rpi-suspend.state"):
             try:
-                os.remove("/run/rpi-fake-sleep.state")
+                os.remove("/run/rpi-suspend.state")
             except Exception:
                 pass
 

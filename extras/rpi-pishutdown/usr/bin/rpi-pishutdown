@@ -83,7 +83,7 @@ class PiShutdownWindow(Gtk.Window):
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
         self.add(box)
 
-        # 1. Standby (calls systemctl suspend -> rpi-fake-sleep)
+        # 1. Standby (calls systemctl suspend -> rpi-suspend)
         btn_standby = Gtk.Button(label=self.t["standby"])
         btn_standby.set_can_focus(True)
         btn_standby.connect("clicked", self.on_standby)
