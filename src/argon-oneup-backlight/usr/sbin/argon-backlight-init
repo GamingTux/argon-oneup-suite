@@ -1,6 +1,6 @@
 #!/bin/bash
 # Argon ONE UP DDC/CI Backlight Binder
-# Bridges internal HDMI-A-2 display DDC I2C bus to /sys/class/backlight/
+# Bridges internal eDP-1 / HDMI-A-2 display DDC I2C bus to /sys/class/backlight/
 set -u
 
 LOCK_FILE="/run/argon-backlight.lock"
@@ -11,7 +11,7 @@ ACTION="${1:-start}"
 
 resolve_bus_num() {
     local conn real num
-    for conn in /sys/class/drm/card*-HDMI-A-2/ddc; do
+    for conn in /sys/class/drm/card*-eDP-*/ddc /sys/class/drm/card*-HDMI-A-2/ddc; do
         [ -e "$conn" ] || continue
         real=$(readlink -f "$conn" 2>/dev/null || true)
         num=$(printf '%s\n' "$real" | grep -o -E '[0-9]+$' || true)
