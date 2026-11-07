@@ -7,6 +7,11 @@ on:
       - "v*"
   pull_request:
     branches: [ "main" ]
+  schedule:
+    # Check and sync upstream external packages daily at 04:00 UTC
+    - cron: '0 4 * * *'
+  repository_dispatch:
+    types: [ rpi-suspend-release, update-external-packages ]
   workflow_dispatch:
 
 permissions:
@@ -44,7 +49,6 @@ jobs:
           python3 -m py_compile extras/ksystemstats-rpi5-fix/usr/sbin/ksystemstats-rpi5-fix
           python3 -m py_compile src/cm5-mmc-fix/usr/bin/cm5-mmc-fix
           python3 -m py_compile src/argon-oneup-battery/usr/bin/argon-power-bench
-          python3 -m py_compile src/rpi-suspend/usr/bin/rpi-suspend
           python3 -m py_compile extras/rpi-pishutdown/usr/bin/rpi-pishutdown
 
           echo "=== Checking Shell syntax ==="

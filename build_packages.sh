@@ -104,12 +104,54 @@ package_dir() {
     rm -rf "${stage_dir}"
 }
 
-for pkg in argon-oneup-essentials argon-oneup-backlight argon-oneup-battery argon-oneup-lid argon-oneup-sensors argon-oneup-power-profiles argon-oneup-suspend rpi-suspend rpi-vc4-edp cm5-mmc-fix argon-oneup-suite; do
+for pkg in argon-oneup-essentials argon-oneup-backlight argon-oneup-battery argon-oneup-lid argon-oneup-sensors argon-oneup-power-profiles argon-oneup-suspend rpi-vc4-edp cm5-mmc-fix argon-oneup-suite; do
     PKG_PATH="${SRC_DIR}/${pkg}"
     if [ -d "${PKG_PATH}" ]; then
         package_dir "${PKG_PATH}" "${DIST_DIR}" "${pkg}"
     fi
 done
+
+echo "=== Synchronizing External Packages (rpi-suspend) ==="
+RPI_SUSPEND_SYNCED=false
+RPI_SUSPEND_URL="https://github.com/GamingTux/rpi-suspend/releases/latest/download/rpi-suspend.deb"
+
+# 1. Prefer local build if ../rpi-suspend exists and has a deb built
+if [ -d "${REPO_DIR}/../rpi-suspend" ]; then
+    LATEST_LOCAL_DEB=$(find "${REPO_DIR}/../rpi-suspend" -maxdepth 1 -name "rpi-suspend_*.deb" | sort -V | tail -n 1)
+    if [ -n "${LATEST_LOCAL_DEB}" ] && [ -f "${LATEST_LOCAL_DEB}" ]; then
+        cp -f "${LATEST_LOCAL_DEB}" "${DIST_DIR}/"
+        RPI_SUSPEND_SYNCED=true
+        echo "Synchronized local rpi-suspend from ${LATEST_LOCAL_DEB}."
+    fi
+fi
+
+# 2. Download from GitHub Releases if not synced locally or in CI environment
+if [ "${RPI_SUSPEND_SYNCED}" = false ]; then
+    echo "Downloading latest rpi-suspend from GitHub Releases (${RPI_SUSPEND_URL})..."
+    TMP_DEB=$(mktemp "${DIST_DIR}/rpi-suspend.XXXXXX.deb")
+    if curl -fsSL -o "${TMP_DEB}" "${RPI_SUSPEND_URL}" 2>/dev/null; then
+        VER=$(dpkg-deb -f "${TMP_DEB}" Version 2>/dev/null || echo "latest")
+        ARCH=$(dpkg-deb -f "${TMP_DEB}" Architecture 2>/dev/null || echo "all")
+        mv -f "${TMP_DEB}" "${DIST_DIR}/rpi-suspend_${VER}_${ARCH}.deb"
+        RPI_SUSPEND_SYNCED=true
+        echo "Downloaded rpi-suspend (${VER} [${ARCH}]) successfully."
+    else
+        rm -f "${TMP_DEB}"
+    fi
+fi
+
+# 3. Fallback: Check if already present in parent / Downloads
+if [ "${RPI_SUSPEND_SYNCED}" = false ]; then
+    if [ -f "${REPO_DIR}/../rpi-suspend.deb" ]; then
+        cp -f "${REPO_DIR}/../rpi-suspend.deb" "${DIST_DIR}/"
+        echo "Used fallback rpi-suspend.deb from ../rpi-suspend.deb."
+        RPI_SUSPEND_SYNCED=true
+    fi
+fi
+
+if [ "${RPI_SUSPEND_SYNCED}" = false ]; then
+    echo "WARNING: Could not fetch rpi-suspend package. Please ensure internet access or provide rpi-suspend.deb."
+fi
 
 echo "=== Building Argon ONE UP Extras (Optional Fixes, Standby, Widgets & Applets) ==="
 
