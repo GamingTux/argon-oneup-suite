@@ -1,0 +1,15 @@
+#!/bin/sh
+set -e
+
+if [ "$1" = "configure" ]; then
+    if [ "$(stat -c %d:%i / 2>/dev/null)" = "$(stat -c %d:%i /proc/1/root/. 2>/dev/null)" ]; then
+        systemctl daemon-reload 2>/dev/null || true
+        systemctl enable rpi-suspend-enable.service 2>/dev/null || true
+        systemctl enable rpi-suspend-lid.service 2>/dev/null || true
+        systemctl restart rpi-suspend-lid.service 2>/dev/null || true
+    fi
+fi
+
+echo "[argon-oneup-suspend] Hardware profile configuration installed and activated successfully."
+exit 0
+

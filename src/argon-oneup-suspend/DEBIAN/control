@@ -1,0 +1,17 @@
+Package: argon-oneup-suspend
+Version: 1.3.4
+Architecture: all
+Maintainer: GamingTux <gamingtux@users.noreply.github.com>
+Section: admin
+Priority: optional
+Homepage: https://github.com/GamingTux/argon-oneup-suite
+Depends: rpi-suspend (>= 1.5.0)
+Recommends: argon-oneup-lid (>= 1.3.4), argon-oneup-backlight (>= 1.3.4), argon-oneup-battery (>= 1.3.4)
+Suggests: rpi-pishutdown (>= 1.3.4)
+Description: Argon ONE UP Sleep, Standby & Clamshell Configuration
+ Configures and activates the Argon ONE UP laptop hardware profile for rpi-suspend:
+  - Selects argon-oneup hardware profile in /etc/rpi-suspend.conf.d/
+  - Internal eDP-1 display clamshell blanking & instant resume
+  - Keyboard & LED power cut on USB ports 6 & 7 during sleep
+  - Preserves TRRS 3.5mm headset combo jack button
+  - Enables lid wakeup and low-power sleep hooks

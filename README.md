@@ -46,10 +46,11 @@ The project is cleanly divided into **Core Hardware Packages** ([`src/`](src)) a
 | [**`argon-oneup-lid`**](src/argon-oneup-lid) | `all` | **Magnetic Lid Switch Overlay:** Configures GPIO 27 as a native Linux `SW_LID` input device via Device Tree overlay. |
 | [**`argon-oneup-sensors`**](src/argon-oneup-sensors) | `all` | **Hardware Sensors Mapping:** Standardizes `lm-sensors` physical hardware definitions (`/etc/sensors.d/argon-oneup.conf`) for CPU thermal, RP1, PWM Fan RPM, NVMe SSD temperature, and CW2217 battery telemetry across all Linux distributions. |
 | [**`argon-oneup-power-profiles`**](src/argon-oneup-power-profiles) | `all` | **ARM64 Power Profiles Daemon:** Implements `org.freedesktop.UPower.PowerProfiles` / `net.hadess.PowerProfiles` D-Bus APIs to manage `schedutil`/`performance`/`powersave` CPU governors, PCIe ASPM, Wi-Fi power saving, and display backlight states. |
+| [**`argon-oneup-suspend`**](src/argon-oneup-suspend) | `all` | **Hardware Sleep & Clamshell Integration:** Activates the Argon ONE UP hardware profile for `rpi-suspend` (`/etc/rpi-suspend.conf.d/90-argon-oneup.conf`). Enables automatic keyboard & LED sleep power cuts, display DPMS blanking, instant lid-open wake, and preserves the TRRS combo jack button. |
 | [**`rpi-suspend`**](src/rpi-suspend) | `all` | **Universal Standby & Sleep Manager:** Deep userspace suspend (`cgroups v2` freeze, single-core WFI + IRQ parking on `CPU0`, USB autosuspend, DPMS off) with instant lid-open & keyboard wake. Drop-in replacement for legacy `rpi-fake-sleep`. |
 | [**`rpi-vc4-edp`**](src/rpi-vc4-edp) | `all` | **Automatic Kernel eDP-1 Display Patcher:** Automatically patches and builds the `vc4` DRM driver across every kernel upgrade to expose internal HDMI laptop panels as native `eDP-1`. Fixes clamshell suspend, eliminates Wayland crashes, and auto-retires once upstream PR #7732 is released. |
 | [**`cm5-mmc-fix`**](src/cm5-mmc-fix) | `all` | **CM5 Empty MicroSD Slot Shutdown Fix:** Patches the BCM2712 SDHCI rescan timeout table (`mmc_rescan freqs[]`) and applies `cm5-sdcard-fast.dtbo` across kernel upgrades to eliminate the 30–80s shutdown hang. |
-| [**`argon-oneup-suite`**](src/argon-oneup-suite) | `all` | **Core Metapackage:** Installs all 9 core packages above with a single command. 100% system-agnostic and clean: modifies no third-party system components. |
+| [**`argon-oneup-suite`**](src/argon-oneup-suite) | `all` | **Core Metapackage:** Installs all 10 core packages above with a single command. 100% system-agnostic and clean: modifies no third-party system components. |
 
 ### Extras: Optional Desktop Extensions & UI Applets ([`extras/`](extras))
 
@@ -155,6 +156,7 @@ sudo apt install ./argon-oneup-essentials_*.deb \
                  ./argon-oneup-lid_*.deb \
                  ./argon-oneup-sensors_*.deb \
                  ./argon-oneup-power-profiles_*.deb \
+                 ./argon-oneup-suspend_*.deb \
                  ./rpi-suspend_*.deb \
                  ./rpi-vc4-edp_*.deb \
                  ./cm5-mmc-fix_*.deb \
