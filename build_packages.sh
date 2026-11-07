@@ -104,7 +104,7 @@ package_dir() {
     rm -rf "${stage_dir}"
 }
 
-for pkg in argon-oneup-essentials argon-oneup-backlight argon-oneup-battery argon-oneup-lid argon-oneup-sensors argon-oneup-power-profiles argon-oneup-suite; do
+for pkg in argon-oneup-essentials argon-oneup-backlight argon-oneup-battery argon-oneup-lid argon-oneup-sensors argon-oneup-power-profiles rpi-suspend argon-oneup-suite; do
     PKG_PATH="${SRC_DIR}/${pkg}"
     if [ -d "${PKG_PATH}" ]; then
         package_dir "${PKG_PATH}" "${DIST_DIR}" "${pkg}"

@@ -1,0 +1,12 @@
+#!/bin/bash
+set -e
+
+if [ "$1" = "remove" ] || [ "$1" = "deconfigure" ]; then
+    systemctl stop rpi-suspend-lid.service 2>/dev/null || true
+    systemctl disable rpi-suspend-lid.service 2>/dev/null || true
+    systemctl stop rpi-suspend-enable.service 2>/dev/null || true
+    systemctl disable rpi-suspend-enable.service 2>/dev/null || true
+    umount /sys/power/state 2>/dev/null || true
+fi
+
+exit 0

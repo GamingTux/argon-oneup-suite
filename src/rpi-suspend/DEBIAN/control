@@ -1,0 +1,26 @@
+Package: rpi-suspend
+Version: 1.5.2
+Architecture: all
+Maintainer: GamingTux <gamingtux@users.noreply.github.com>
+Section: admin
+Priority: optional
+Homepage: https://github.com/GamingTux/rpi-suspend
+Depends: python3, systemd
+Recommends: iw, rfkill
+Suggests: rpi-pishutdown
+Provides: rpi-fake-sleep
+Replaces: rpi-fake-sleep
+Conflicts: rpi-fake-sleep
+Description: Universal Userspace Suspend, Standby & Clamshell Manager for Raspberry Pi
+ Enables native low-power sleep, standby, and laptop clamshell mode on
+ Raspberry Pi 4 / 5 & CM4 / CM5 systems where platform firmware lacks
+ ACPI S3 or hardware s2idle support.
+ .
+ Features:
+  - Seamless systemd-suspend & desktop environment integration (KDE, GNOME, Wayfire, Labwc, XFCE)
+  - Cgroups v2 process freezing & single-core CPU parking (C1-C3 in hardware WFI)
+  - Universal DRM DPMS & backlight blanking across Wayland and X11
+  - Instant <1ms interrupt wakeup via keyboard, mouse, power button, or lid switch
+  - Docked Clamshell Mode (turns off internal laptop display & keyboard when docked to an external monitor)
+  - Modular hardware profile system (generic, argon-oneup, uconsole, devterm, crowview, pitop4)
+  - Extensible drop-in configs (/etc/rpi-suspend.conf.d/) & hook scripts (/etc/rpi-suspend/hooks.d/)

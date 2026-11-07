@@ -1,0 +1,27 @@
+#!/bin/bash
+set -e
+
+# Remove obsolete Raspberry Pi OS nosuspend drop-in and legacy rpi-fake-sleep drop-ins
+rm -f /etc/systemd/sleep.conf.d/nosuspend.conf 2>/dev/null || true
+rm -f /etc/systemd/logind.conf.d/10-rpi-fake-sleep.conf 2>/dev/null || true
+rm -f /etc/systemd/sleep.conf.d/99-rpi-fake-sleep.conf 2>/dev/null || true
+rm -f /etc/systemd/system/systemd-suspend.service.d/10-rpi-fake-sleep.conf 2>/dev/null || true
+
+# Auto-detect Argon ONE UP hardware (AMIRA 6080 keyboard or CW2217 battery) on install
+if [ -f /etc/rpi-suspend.conf ] && grep -q '^PROFILE="generic"' /etc/rpi-suspend.conf; then
+    if lsusb 2>/dev/null | grep -qi "6080:" || [ -d /sys/bus/i2c/drivers/cw2217 ]; then
+        /usr/bin/rpi-suspend set-profile argon-oneup 2>/dev/null || \
+            sed -i 's/^PROFILE="generic"/PROFILE="argon-oneup"/' /etc/rpi-suspend.conf 2>/dev/null || true
+    fi
+fi
+
+systemctl daemon-reload 2>/dev/null || true
+systemctl enable rpi-suspend-enable.service 2>/dev/null || true
+systemctl start rpi-suspend-enable.service 2>/dev/null || true
+systemctl enable rpi-suspend-lid.service 2>/dev/null || true
+systemctl restart rpi-suspend-lid.service 2>/dev/null || true
+
+systemctl try-reload-or-restart systemd-logind.service 2>/dev/null || true
+
+echo "[rpi-suspend] Universal Raspberry Pi userspace suspend manager installed successfully."
+exit 0

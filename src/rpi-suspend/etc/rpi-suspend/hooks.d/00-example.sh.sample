@@ -1,0 +1,8 @@
+#!/bin/sh
+# Place executable scripts in /etc/rpi-suspend/hooks.d/
+# Each script is called with one argument:
+#   pre       - Before entering deep s2idle standby
+#   post      - After waking up from s2idle standby
+#   docked    - When lid closes with an external monitor connected (Clamshell Mode)
+#   undocked  - When lid opens or external monitor is unplugged in Clamshell Mode
+exit 0

@@ -1,0 +1,12 @@
+[Unit]
+Description=Raspberry Pi Lid & Clamshell Mode Daemon
+After=systemd-logind.service multi-user.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/rpi-suspend lid-daemon
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

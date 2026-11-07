@@ -19,8 +19,8 @@ Keeping these packages in `extras/` ensures that the core hardware driver suite 
 
 > [!NOTE]
 > **Standby / Suspend (`rpi-suspend`):**
-> Sleep and standby management for Raspberry Pi 5 / CM5 is maintained as a dedicated standalone project at [**github.com/GamingTux/rpi-suspend**](https://github.com/GamingTux/rpi-suspend).
-> The benchmark utility `argon-power-bench` is now included directly in [`argon-oneup-battery`](../src/argon-oneup-battery).
+> Sleep and standby management for Raspberry Pi 5 / CM5 is now integrated as a core component of the suite in [`src/rpi-suspend`](../src/rpi-suspend) and installed automatically by the metapackage `argon-oneup-suite`. It directly replaces legacy `rpi-fake-sleep`.
+> The benchmark utility `argon-power-bench` is included in [`argon-oneup-battery`](../src/argon-oneup-battery).
 
 ---
 

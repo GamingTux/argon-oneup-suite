@@ -1,0 +1,14 @@
+[Unit]
+Description=Enable Userspace Suspend Support for Raspberry Pi
+DefaultDependencies=no
+After=systemd-remount-fs.service
+Before=systemd-logind.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/sh -c 'echo "mem freeze" > /run/fake_power_state && (grep -q " /sys/power/state " /proc/mounts || mount --bind /run/fake_power_state /sys/power/state)'
+ExecStop=/bin/sh -c 'umount /sys/power/state 2>/dev/null || true'
+
+[Install]
+WantedBy=sysinit.target

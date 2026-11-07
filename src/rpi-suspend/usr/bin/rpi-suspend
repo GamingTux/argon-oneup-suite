@@ -1,0 +1,1672 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-or-later
+"""
+rpi-suspend — Universal Userspace Suspend, Standby & Clamshell Manager for Raspberry Pi
+Provides native low-power sleep, instant <1ms wake, and docked clamshell mode on
+Raspberry Pi 4 / 5 & CM4 / CM5 systems where platform firmware lacks ACPI S3.
+"""
+
+import os
+import re
+import sys
+import pwd
+import glob
+import time
+import signal
+import select
+import struct
+import syslog
+import fcntl
+import fnmatch
+import subprocess
+
+CONF_FILE = "/etc/rpi-suspend.conf"
+LEGACY_CONF_FILE = "/etc/rpi-fake-sleep.conf"
+CONF_DIR = "/etc/rpi-suspend.conf.d"
+PROFILES_DIR = "/usr/share/rpi-suspend/profiles"
+HOOKS_DIRS = ("/usr/lib/rpi-suspend/hooks.d", "/etc/rpi-suspend/hooks.d")
+ACTIVE_LOCK_FILE = "/run/rpi-suspend.active"
+
+EVIOCGSW_4 = 0x8004451b
+EVIOCGNAME_256 = (2 << 30) | (256 << 16) | (ord('E') << 8) | 0x06
+
+EVENT_FORMAT = "llHHi"
+EVENT_SIZE = struct.calcsize(EVENT_FORMAT)
+
+POWER_KEY_CODES = (116, 142, 143)  # KEY_POWER, KEY_SLEEP, KEY_WAKEUP
+
+BOOL_KEYS = (
+    # Mode 1: Deep Standby / Suspend (SLEEP_*)
+    "SLEEP_LOCK_SCREEN",
+    "SLEEP_PAUSE_MEDIA",
+    "SLEEP_MUTE_AUDIO",
+    "SLEEP_BLANK_DISPLAYS",
+    "SLEEP_DIM_BACKLIGHT",
+    "SLEEP_DIM_KBD_BACKLIGHT",
+    "SLEEP_FREEZE_PROCESSES",
+    "SLEEP_CPU_POWERSAVE",
+    "SLEEP_CPU_PARKING",
+    "SLEEP_WORKQUEUE_POWERSAVE",
+    "SLEEP_USB_AUTOSUSPEND",
+    "SLEEP_WIFI_POWERSAVE",
+    "SLEEP_WIFI_RFKILL",
+    "SLEEP_BLUETOOTH_RFKILL",
+    "SLEEP_FAN_SILENT",
+    "SLEEP_CUSTOM_POWER_CUTS",
+    "SLEEP_RUN_HOOKS",
+    # Mode 2: Docked Clamshell Mode (CLAMSHELL_*)
+    "CLAMSHELL_ENABLE",
+    "CLAMSHELL_SUSPEND_UNDOCKED",
+    "CLAMSHELL_BLANK_INTERNAL_DISPLAY",
+    "CLAMSHELL_DIM_INTERNAL_BACKLIGHT",
+    "CLAMSHELL_DIM_KBD_BACKLIGHT",
+    "CLAMSHELL_DISABLE_INTERNAL_INPUT",
+    "CLAMSHELL_LOCK_ON_CLOSE",
+    "CLAMSHELL_RUN_HOOKS",
+    # Mode 3: Wakeup Sources (WAKE_*)
+    "WAKE_ON_LID_OPEN",
+    "WAKE_ON_POWER_BUTTON",
+    "WAKE_ON_KEYBOARD",
+    "WAKE_ON_MOUSE_CLICK",
+    "WAKE_ON_MOUSE_MOVE",
+    # Mode 4: Safety Watchdogs & Telemetry (WATCHDOG_* / LOG_*)
+    "WATCHDOG_THERMAL_ENABLE",
+    "WATCHDOG_BATTERY_ENABLE",
+    "LOG_WAKEUP_SUMMARY",
+)
+
+INT_KEYS = (
+    "WATCHDOG_THERMAL_TEMP_MC",
+    "WATCHDOG_MAX_BATTERY_LOSS_PERCENT",
+)
+
+STR_KEYS = (
+    "PROFILE",
+    "INTERNAL_DISPLAY",
+    "CUSTOM_POWER_CUT_PATHS",
+    "CUSTOM_USBHID_UNBIND",
+)
+
+LEGACY_KEY_MAP = {
+    "ENABLE_LOCK_SCREEN": "SLEEP_LOCK_SCREEN",
+    "ENABLE_MPRIS_PAUSE": "SLEEP_PAUSE_MEDIA",
+    "ENABLE_AUDIO_MUTE": "SLEEP_MUTE_AUDIO",
+    "ENABLE_DISPLAY_DPMS": "SLEEP_BLANK_DISPLAYS",
+    "ENABLE_KBD_BACKLIGHT": "SLEEP_DIM_KBD_BACKLIGHT",
+    "ENABLE_CGROUP_FREEZE": "SLEEP_FREEZE_PROCESSES",
+    "ENABLE_CPU_POWERSAVE": "SLEEP_CPU_POWERSAVE",
+    "ENABLE_CPU_PARKING": "SLEEP_CPU_PARKING",
+    "ENABLE_AUDIO_AUTOSUSPEND": "SLEEP_USB_AUTOSUSPEND",
+    "SUSPEND_WIFI_POWERSAVE": "SLEEP_WIFI_POWERSAVE",
+    "SUSPEND_BLUETOOTH_BLOCK": "SLEEP_BLUETOOTH_RFKILL",
+    "ENABLE_FAN_CONTROL": "SLEEP_FAN_SILENT",
+    "ENABLE_CLAMSHELL_MODE": "CLAMSHELL_ENABLE",
+    "WAKE_ON_LID": "WAKE_ON_LID_OPEN",
+    "WAKE_ON_MOUSE": "WAKE_ON_MOUSE_CLICK",
+    "FAN_WATCHDOG_TEMP_MC": "WATCHDOG_THERMAL_TEMP_MC",
+    "MAX_BATTERY_LOSS_PERCENT": "WATCHDOG_MAX_BATTERY_LOSS_PERCENT",
+}
+
+
+def default_config():
+    return {
+        "PROFILE": "generic",
+        # --- Mode 1: Deep Standby / Suspend (SLEEP_*) ---
+        "SLEEP_LOCK_SCREEN": True,
+        "SLEEP_PAUSE_MEDIA": True,
+        "SLEEP_MUTE_AUDIO": True,
+        "SLEEP_BLANK_DISPLAYS": True,
+        "SLEEP_DIM_BACKLIGHT": True,
+        "SLEEP_DIM_KBD_BACKLIGHT": True,
+        "SLEEP_FREEZE_PROCESSES": True,
+        "SLEEP_CPU_POWERSAVE": True,
+        "SLEEP_CPU_PARKING": True,
+        "SLEEP_WORKQUEUE_POWERSAVE": True,
+        "SLEEP_USB_AUTOSUSPEND": True,
+        "SLEEP_WIFI_POWERSAVE": True,
+        "SLEEP_WIFI_RFKILL": False,
+        "SLEEP_BLUETOOTH_RFKILL": False,
+        "SLEEP_FAN_SILENT": True,
+        "SLEEP_CUSTOM_POWER_CUTS": True,
+        "SLEEP_RUN_HOOKS": True,
+        # --- Mode 2: Docked Clamshell Mode (CLAMSHELL_*) ---
+        "CLAMSHELL_ENABLE": True,
+        "CLAMSHELL_SUSPEND_UNDOCKED": True,
+        "CLAMSHELL_BLANK_INTERNAL_DISPLAY": True,
+        "CLAMSHELL_DIM_INTERNAL_BACKLIGHT": True,
+        "CLAMSHELL_DIM_KBD_BACKLIGHT": True,
+        "CLAMSHELL_DISABLE_INTERNAL_INPUT": True,
+        "CLAMSHELL_LOCK_ON_CLOSE": False,
+        "CLAMSHELL_RUN_HOOKS": True,
+        # --- Mode 3: Wakeup Sources (WAKE_*) ---
+        "WAKE_ON_LID_OPEN": True,
+        "WAKE_ON_POWER_BUTTON": True,
+        "WAKE_ON_KEYBOARD": True,
+        "WAKE_ON_MOUSE_CLICK": True,
+        "WAKE_ON_MOUSE_MOVE": False,
+        # --- Mode 4: Watchdogs & Telemetry ---
+        "WATCHDOG_THERMAL_ENABLE": True,
+        "WATCHDOG_THERMAL_TEMP_MC": 68000,
+        "WATCHDOG_BATTERY_ENABLE": True,
+        "WATCHDOG_MAX_BATTERY_LOSS_PERCENT": 10,
+        "LOG_WAKEUP_SUMMARY": True,
+        # --- Hardware Profile Paths & Quirks ---
+        "INTERNAL_DISPLAY": "eDP-* LVDS-* DSI-*",
+        "CUSTOM_POWER_CUT_PATHS": "",
+        "CUSTOM_USBHID_UNBIND": "",
+    }
+
+
+def _parse_kv_file(filepath, target_dict):
+    if not os.path.isfile(filepath):
+        return
+    try:
+        with open(filepath, "r") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                k, v = line.split("=", 1)
+                k = k.strip()
+                v = v.strip().strip('"').strip("'")
+
+                # Map legacy keys to new structured keys
+                if k in LEGACY_KEY_MAP:
+                    k = LEGACY_KEY_MAP[k]
+
+                if k in INT_KEYS:
+                    try:
+                        target_dict[k] = int(v)
+                    except ValueError:
+                        pass
+                elif k in BOOL_KEYS:
+                    target_dict[k] = v.lower() in ("true", "1", "yes", "on")
+                elif k in ("DISABLE_KEYBOARD_IN_SLEEP", "DISABLE_KEYBOARD_WHEN_CLOSED"):
+                    val_lower = v.lower()
+                    target_dict["SLEEP_CUSTOM_POWER_CUTS"] = val_lower not in ("never", "none", "false", "0", "no")
+                elif k in STR_KEYS:
+                    target_dict[k] = v
+    except Exception:
+        pass
+
+
+def load_config():
+    """
+    Loads configuration in priority order:
+    1. Built-in universal defaults
+    2. Hardware profile (/usr/share/rpi-suspend/profiles/<PROFILE>.conf)
+    3. Main configuration (/etc/rpi-suspend.conf or legacy /etc/rpi-fake-sleep.conf)
+    4. Drop-in snippets (/etc/rpi-suspend.conf.d/*.conf)
+    """
+    cfg = default_config()
+
+    # Pre-scan to discover active PROFILE
+    probe = {}
+    if os.path.isfile(LEGACY_CONF_FILE) and not os.path.isfile(CONF_FILE):
+        _parse_kv_file(LEGACY_CONF_FILE, probe)
+    _parse_kv_file(CONF_FILE, probe)
+    for dropin in sorted(glob.glob(os.path.join(CONF_DIR, "*.conf"))):
+        _parse_kv_file(dropin, probe)
+
+    profile_name = probe.get("PROFILE", "generic") or "generic"
+    if profile_name in ("generic", "auto"):
+        if os.path.isdir("/sys/bus/i2c/drivers/cw2217") or os.path.isdir("/sys/bus/i2c/drivers/oneup-battery"):
+            profile_name = "argon-oneup"
+        else:
+            for vfile in glob.glob("/sys/bus/usb/devices/*/idVendor"):
+                try:
+                    with open(vfile, "r") as vf:
+                        if vf.read().strip().lower() == "6080":
+                            profile_name = "argon-oneup"
+                            break
+                except Exception:
+                    pass
+    cfg["PROFILE"] = profile_name
+
+    # Load hardware profile if present
+    profile_path = os.path.join(PROFILES_DIR, f"{profile_name}.conf")
+    if os.path.isfile(profile_path):
+        _parse_kv_file(profile_path, cfg)
+
+    # Apply main config and drop-ins
+    if os.path.isfile(LEGACY_CONF_FILE) and not os.path.isfile(CONF_FILE):
+        _parse_kv_file(LEGACY_CONF_FILE, cfg)
+    _parse_kv_file(CONF_FILE, cfg)
+    for dropin in sorted(glob.glob(os.path.join(CONF_DIR, "*.conf"))):
+        _parse_kv_file(dropin, cfg)
+
+    return cfg
+
+
+def log(msg):
+    try:
+        syslog.openlog("rpi-suspend")
+        syslog.syslog(syslog.LOG_INFO, str(msg))
+    except Exception:
+        try:
+            subprocess.run(["logger", "-t", "rpi-suspend", str(msg)], timeout=2, check=False)
+        except Exception:
+            pass
+
+
+def run_hooks(phase: str):
+    """Executes custom hook scripts in HOOKS_DIRS with the given phase ('pre', 'post', 'docked', 'undocked')."""
+    seen = set()
+    scripts = []
+    for d in HOOKS_DIRS:
+        if os.path.isdir(d):
+            for entry in sorted(os.listdir(d)):
+                if entry.startswith(".") or entry in seen:
+                    continue
+                full = os.path.join(d, entry)
+                if os.path.isfile(full) and os.access(full, os.X_OK):
+                    seen.add(entry)
+                    scripts.append(full)
+    for script in scripts:
+        try:
+            subprocess.run([script, phase], timeout=10, check=False)
+        except Exception as e:
+            log(f"Hook {script} ({phase}) failed: {e}")
+
+
+_cached_lid_dev = None
+
+
+def get_lid_device_path():
+    """Finds and caches the /dev/input/event* path for the hardware lid switch."""
+    global _cached_lid_dev
+    if _cached_lid_dev and os.path.exists(_cached_lid_dev):
+        return _cached_lid_dev
+    for dev in sorted(glob.glob("/dev/input/event*")):
+        fd = -1
+        try:
+            fd = os.open(dev, os.O_RDONLY | os.O_NONBLOCK)
+            buf = bytearray(256)
+            fcntl.ioctl(fd, EVIOCGNAME_256, buf)
+            name = buf.split(b'\x00')[0].decode('utf-8', errors='ignore')
+            if "lid" in name.lower():
+                _cached_lid_dev = dev
+                return dev
+        except Exception:
+            pass
+        finally:
+            if fd >= 0:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+    return None
+
+
+def get_lid_state(lid_fd=None):
+    """Returns 'closed', 'open', or 'none' if no lid switch exists."""
+    global _cached_lid_dev
+    if lid_fd is not None and lid_fd >= 0:
+        try:
+            sw = bytearray(4)
+            fcntl.ioctl(lid_fd, EVIOCGSW_4, sw)
+            return "closed" if (sw[0] & 1) else "open"
+        except Exception:
+            pass
+    dev = get_lid_device_path()
+    if not dev:
+        return "none"
+    fd = -1
+    try:
+        fd = os.open(dev, os.O_RDONLY | os.O_NONBLOCK)
+        sw = bytearray(4)
+        fcntl.ioctl(fd, EVIOCGSW_4, sw)
+        return "closed" if (sw[0] & 1) else "open"
+    except Exception:
+        _cached_lid_dev = None
+        return "none"
+    finally:
+        if fd >= 0:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+
+
+def get_drm_connectors(cfg):
+    """
+    Classifies connected DRM displays into (internal_connectors, external_connectors)
+    based on INTERNAL_DISPLAY patterns in cfg.
+    Returns lists of connector names (e.g. ['eDP-1'] or ['HDMI-A-1']).
+    Also considers connectors with enabled == 'enabled' as active in case
+    hardware HPD transiently drops when the lid switch cuts 5V before GPIO debounce.
+    """
+    patterns = (cfg.get("INTERNAL_DISPLAY") or "eDP-* LVDS-* DSI-*").split()
+    internal = []
+    external = []
+    for status_file in sorted(glob.glob("/sys/class/drm/card*-*/status")):
+        try:
+            conn_dir = os.path.dirname(status_file)
+            card_conn = os.path.basename(conn_dir)
+            conn_name = card_conn.split("-", 1)[1] if "-" in card_conn else card_conn
+            if conn_name.startswith("Writeback"):
+                continue
+            with open(status_file, "r") as f:
+                st = f.read().strip()
+            enabled_file = os.path.join(conn_dir, "enabled")
+            en = ""
+            if os.path.isfile(enabled_file):
+                with open(enabled_file, "r") as ef:
+                    en = ef.read().strip()
+            if st != "connected" and en != "enabled":
+                continue
+            is_int = any(fnmatch.fnmatch(conn_name, pat) for pat in patterns)
+            if is_int:
+                if conn_name not in internal:
+                    internal.append(conn_name)
+            else:
+                if conn_name not in external:
+                    external.append(conn_name)
+        except Exception:
+            pass
+    return internal, external
+
+
+def read_battery_soc():
+    """Reads current battery capacity in percent, or None if no battery exists."""
+    for p in glob.glob("/sys/class/power_supply/BAT*/capacity") + glob.glob("/sys/class/power_supply/*battery*/capacity"):
+        try:
+            with open(p, "r") as f:
+                return int(f.read().strip())
+        except Exception:
+            pass
+    return None
+
+
+def is_on_ac():
+    """Returns True if mains/AC charger is connected."""
+    for p in (
+        glob.glob("/sys/class/power_supply/AC*/online")
+        + glob.glob("/sys/class/power_supply/mains/online")
+        + glob.glob("/sys/class/power_supply/*ac*/online")
+    ):
+        try:
+            with open(p, "r") as f:
+                if f.read().strip() == "1":
+                    return True
+        except Exception:
+            pass
+    return False
+
+
+_saved_kbd_leds = {}
+
+
+def set_keyboard_and_custom_power(cfg, enable: bool, do_kbd_backlight: bool = True, do_custom_cuts: bool = True):
+    """
+    Manages standard Linux keyboard backlight LEDs (/sys/class/leds/*kbd*backlight*)
+    and optional hardware-specific CUSTOM_POWER_CUT_PATHS (e.g. USB port power cuts).
+    """
+    global _saved_kbd_leds
+
+    # 1. Standard Linux LED class keyboard backlights
+    if do_kbd_backlight:
+        led_paths = set(
+            glob.glob("/sys/class/leds/*kbd*backlight*/brightness")
+            + glob.glob("/sys/class/leds/*::kbd_backlight/brightness")
+        )
+        for p in sorted(led_paths):
+            try:
+                if not enable:
+                    with open(p, "r") as f:
+                        _saved_kbd_leds[p] = int(f.read().strip())
+                    with open(p, "w") as f:
+                        f.write("0")
+                else:
+                    prev = _saved_kbd_leds.get(p, 0)
+                    if prev > 0:
+                        with open(p, "w") as f:
+                            f.write(str(prev))
+            except Exception:
+                pass
+
+    # 2. Optional profile-defined custom power-cut paths
+    if not do_custom_cuts:
+        return
+
+    raw_paths = (cfg.get("CUSTOM_POWER_CUT_PATHS") or "").strip()
+    if not raw_paths:
+        return
+
+    for pattern in raw_paths.split():
+        for p in glob.glob(pattern):
+            try:
+                if p.endswith("/disable"):
+                    val = "0" if enable else "1"
+                else:
+                    val = "1" if enable else "0"
+                with open(p, "w") as f:
+                    f.write(val)
+            except Exception:
+                pass
+
+
+def get_wifi_power_save() -> bool:
+    """Returns True if wlan0 802.11 power saving is currently active."""
+    for iw in ["/usr/sbin/iw", "/usr/bin/iw", "iw"]:
+        try:
+            res = subprocess.run([iw, "dev", "wlan0", "get", "power_save"],
+                                 capture_output=True, text=True, timeout=3, check=False)
+            if res.returncode == 0:
+                return "power save: on" in res.stdout.lower()
+        except Exception:
+            pass
+    return False
+
+
+def set_wifi_power_save(enable: bool):
+    """Toggles 802.11 power saving on wlan0."""
+    for iw in ["/usr/sbin/iw", "/usr/bin/iw", "iw"]:
+        try:
+            subprocess.run([iw, "dev", "wlan0", "set", "power_save", "on" if enable else "off"],
+                           timeout=3, check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            break
+        except Exception:
+            pass
+
+
+def get_radio_blocked(radio_type: str) -> bool:
+    """Checks if a radio ('wifi' or 'bluetooth') is currently soft-blocked via rfkill."""
+    for rf in ["/usr/sbin/rfkill", "/usr/bin/rfkill", "rfkill"]:
+        try:
+            res = subprocess.run([rf, "list", radio_type], capture_output=True, text=True, timeout=3, check=False)
+            if res.returncode == 0:
+                return "soft blocked: yes" in res.stdout.lower()
+        except Exception:
+            pass
+    return False
+
+
+def set_radio_power(radio_type: str, enable: bool):
+    """Enables or soft-blocks a radio ('wifi' or 'bluetooth') via rfkill."""
+    for rf in ["/usr/sbin/rfkill", "/usr/bin/rfkill", "rfkill"]:
+        try:
+            action = "unblock" if enable else "block"
+            subprocess.run([rf, action, radio_type],
+                           timeout=3, check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            break
+        except Exception:
+            pass
+
+
+def set_usb_autosuspend(cfg):
+    """Enables standard USB runtime autosuspend on USB audio devices and internal USB 2.0 hubs."""
+    if cfg.get("SLEEP_CUSTOM_POWER_CUTS", True):
+        for hid_id in (cfg.get("CUSTOM_USBHID_UNBIND") or "").split():
+            if os.path.exists(f"/sys/bus/usb/drivers/usbhid/{hid_id}"):
+                try:
+                    with open("/sys/bus/usb/drivers/usbhid/unbind", "w") as f:
+                        f.write(hid_id)
+                except Exception:
+                    pass
+
+    if not cfg.get("SLEEP_USB_AUTOSUSPEND", True):
+        return
+
+    for audio_intf in glob.glob("/sys/bus/usb/drivers/snd-usb-audio/*:*"):
+        try:
+            usb_dev = os.path.realpath(os.path.join(audio_intf, ".."))
+            for attr, val in (("power/autosuspend_delay_ms", "500"), ("power/control", "auto")):
+                p = os.path.join(usb_dev, attr)
+                if os.path.isfile(p):
+                    with open(p, "w") as f:
+                        f.write(val)
+        except Exception:
+            pass
+
+    for hub_dev in ("/sys/bus/usb/devices/1-1", "/sys/bus/usb/devices/usb1"):
+        for attr, val in (("power/autosuspend_delay_ms", "0"), ("power/control", "auto")):
+            p = os.path.join(hub_dev, attr)
+            if os.path.isfile(p):
+                try:
+                    with open(p, "w") as f:
+                        f.write(val)
+                except Exception:
+                    pass
+
+    # Keep RP1 xHCI (xhci-hcd.*) and DWC2 (*.usb) platform controllers at standard 'on'
+    # so empty USB 3.0 / 3.1 ports never lose hotplug detection
+    for usb_ctrl in (
+        glob.glob("/sys/bus/platform/devices/*.usb/power/control")
+        + glob.glob("/sys/bus/platform/devices/xhci-hcd.*/power/control")
+    ):
+        try:
+            with open(usb_ctrl, "w") as f:
+                f.write("on")
+        except Exception:
+            pass
+
+
+def pause_media_players():
+    """Universally pauses any active MPRIS2 media players across all desktop environments."""
+    for bus in glob.glob("/run/user/*/bus"):
+        try:
+            uid = bus.split("/")[3]
+            env_vars = [f"XDG_RUNTIME_DIR=/run/user/{uid}", f"DBUS_SESSION_BUS_ADDRESS=unix:path={bus}"]
+            res = subprocess.run(
+                ["sudo", "-u", f"#{uid}", "env"] + env_vars + ["busctl", "--user", "--list"],
+                capture_output=True, text=True, timeout=2, check=False
+            )
+            if res.returncode == 0:
+                for line in res.stdout.splitlines():
+                    parts = line.split()
+                    if parts and parts[0].startswith("org.mpris.MediaPlayer2."):
+                        subprocess.run(
+                            ["sudo", "-u", f"#{uid}", "env"] + env_vars + [
+                                "busctl", "--user", "call", parts[0],
+                                "/org/mpris/MediaPlayer2", "org.mpris.MediaPlayer2.Player", "Pause"
+                            ],
+                            check=False, timeout=1, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+                        )
+        except Exception:
+            pass
+
+
+def lock_sessions():
+    """Triggers standard systemd-logind session locking."""
+    try:
+        subprocess.run(["loginctl", "lock-sessions"], check=False, timeout=2)
+    except Exception:
+        pass
+
+
+def get_audio_mute_state():
+    """Returns saved mute states for ALSA Master and active pipewire user sessions."""
+    state = {"amixer_muted": False, "pipewire_muted": {}}
+    try:
+        res = subprocess.run(["amixer", "get", "Master"], capture_output=True, text=True, timeout=2, check=False)
+        if res.returncode == 0 and "[off]" in res.stdout:
+            state["amixer_muted"] = True
+    except Exception:
+        pass
+
+    for pw in glob.glob("/run/user/*/pipewire-0"):
+        try:
+            uid = pw.split("/")[3]
+            res = subprocess.run(
+                ["sudo", "-u", f"#{uid}", "env", f"XDG_RUNTIME_DIR=/run/user/{uid}",
+                 "wpctl", "get-volume", "@DEFAULT_AUDIO_SINK@"],
+                capture_output=True, text=True, timeout=2, check=False
+            )
+            if res.returncode == 0 and "[MUTED]" in res.stdout:
+                state["pipewire_muted"][uid] = True
+            else:
+                state["pipewire_muted"][uid] = False
+        except Exception:
+            pass
+    return state
+
+
+def mute_audio():
+    try:
+        subprocess.run(["amixer", "set", "Master", "mute"], timeout=2, check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception:
+        pass
+    for pw in glob.glob("/run/user/*/pipewire-0"):
+        try:
+            uid = pw.split("/")[3]
+            subprocess.run(
+                ["sudo", "-u", f"#{uid}", "env", f"XDG_RUNTIME_DIR=/run/user/{uid}",
+                 "wpctl", "set-mute", "@DEFAULT_AUDIO_SINK@", "1"],
+                timeout=2, check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+            )
+        except Exception:
+            pass
+
+
+def restore_audio(cfg, saved_audio_state):
+    """Restores runtime autosuspend delay (2000ms) and unmutes audio if not originally muted."""
+    if cfg.get("SLEEP_USB_AUTOSUSPEND", True):
+        for audio_intf in glob.glob("/sys/bus/usb/drivers/snd-usb-audio/*:*"):
+            try:
+                usb_dev = os.path.realpath(os.path.join(audio_intf, ".."))
+                p = os.path.join(usb_dev, "power/autosuspend_delay_ms")
+                if os.path.isfile(p):
+                    with open(p, "w") as f:
+                        f.write("2000")
+            except Exception:
+                pass
+
+    if not cfg.get("SLEEP_MUTE_AUDIO", True):
+        return
+
+    pw_states = saved_audio_state.get("pipewire_muted", {})
+    for pw in glob.glob("/run/user/*/pipewire-0"):
+        try:
+            uid = pw.split("/")[3]
+            was_muted = pw_states.get(uid, False)
+            if not was_muted:
+                subprocess.run(
+                    ["sudo", "-u", f"#{uid}", "env", f"XDG_RUNTIME_DIR=/run/user/{uid}",
+                     "wpctl", "set-mute", "@DEFAULT_AUDIO_SINK@", "0"],
+                    timeout=2, check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+                )
+        except Exception:
+            pass
+    if not saved_audio_state.get("amixer_muted", False):
+        try:
+            subprocess.run(["amixer", "set", "Master", "unmute"], timeout=2, check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except Exception:
+            pass
+
+
+def blank_displays(target_connectors=None, external_connectors=None, do_dpms=True, do_backlight=True):
+    """
+    Saves current brightness and blanks displays via pure kernel sysfs (backlight & DRM DPMS).
+    If target_connectors is None, blanks ALL displays (full system suspend).
+    If target_connectors is a list (e.g. ['eDP-1']), blanks ONLY those internal displays (Clamshell Mode).
+    """
+    saved_brightness = {}
+    if do_backlight:
+        for bl in glob.glob("/sys/class/backlight/*"):
+            b_file = os.path.join(bl, "brightness")
+            if os.path.isfile(b_file):
+                try:
+                    with open(b_file, "r") as f:
+                        val = int(f.read().strip())
+                    saved_brightness[b_file] = val
+                    with open(b_file, "w") as f:
+                        f.write("0")
+                except Exception:
+                    pass
+
+    if not do_dpms:
+        return saved_brightness
+
+    if target_connectors is None:
+        # 1. Console / Framebuffer blank
+        for fb_blank in glob.glob("/sys/class/graphics/fb*/blank"):
+            try:
+                with open(fb_blank, "w") as f:
+                    f.write("1")
+            except Exception:
+                pass
+
+        # 2. Wayland DPMS Off
+        for w in glob.glob("/run/user/*/wayland-*"):
+            if w.endswith(".lock"):
+                continue
+            try:
+                uid = w.split("/")[3]
+                w_name = os.path.basename(w)
+                env_vars = ["sudo", "-u", f"#{uid}", "env", f"XDG_RUNTIME_DIR=/run/user/{uid}", f"WAYLAND_DISPLAY={w_name}"]
+                if os.path.isfile("/usr/bin/kscreen-doctor"):
+                    subprocess.run(env_vars + ["QT_QPA_PLATFORM=wayland", "kscreen-doctor", "--dpms", "off"],
+                                   check=False, timeout=2, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                if os.path.isfile("/usr/bin/wlopm"):
+                    subprocess.run(env_vars + ["wlopm", "--off", "*"],
+                                   check=False, timeout=2, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                bus = f"/run/user/{uid}/bus"
+                if os.path.exists(bus):
+                    subprocess.run(
+                        env_vars + [f"DBUS_SESSION_BUS_ADDRESS=unix:path={bus}",
+                                    "busctl", "--user", "set-property", "org.gnome.Mutter.DisplayConfig",
+                                    "/org/gnome/Mutter/DisplayConfig", "org.gnome.Mutter.DisplayConfig", "PowerSaveMode", "i", "3"],
+                        check=False, timeout=1, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+                    )
+            except Exception:
+                pass
+
+        # 3. X11 DPMS Off
+        if os.path.isfile("/usr/bin/xset"):
+            for xsock in glob.glob("/tmp/.X11-unix/X*"):
+                try:
+                    disp = ":" + os.path.basename(xsock)[1:]
+                    for bus in glob.glob("/run/user/*/bus"):
+                        uid = bus.split("/")[3]
+                        try:
+                            user_home = pwd.getpwuid(int(uid)).pw_dir
+                        except Exception:
+                            user_home = "/root"
+                        xauth = f"/run/user/{uid}/gdm/Xauthority"
+                        if not os.path.isfile(xauth) or os.path.getsize(xauth) == 0:
+                            xauth = os.path.join(user_home, ".Xauthority")
+                        if os.path.isfile(xauth) and os.path.getsize(xauth) > 0:
+                            base_cmd = ["sudo", "-u", f"#{uid}", "env", f"DISPLAY={disp}", f"XAUTHORITY={xauth}"]
+                        elif os.path.isfile(f"/var/run/lightdm/root/{disp}"):
+                            base_cmd = ["env", f"DISPLAY={disp}", f"XAUTHORITY=/var/run/lightdm/root/{disp}"]
+                        else:
+                            base_cmd = ["sudo", "-u", f"#{uid}", "env", f"DISPLAY={disp}", f"XAUTHORITY={xauth}"]
+                        subprocess.run(base_cmd + ["xset", "dpms", "force", "off"],
+                                       check=False, timeout=2, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                except Exception:
+                    pass
+
+    return saved_brightness
+
+
+def restore_displays(saved_brightness, target_connectors=None, do_dpms=True, do_backlight=True):
+    """Restores DPMS and backlight brightness on wakeup."""
+    if do_dpms:
+        if target_connectors is None:
+            # 1. Console / Framebuffer unblank
+            for fb_blank in glob.glob("/sys/class/graphics/fb*/blank"):
+                try:
+                    with open(fb_blank, "w") as f:
+                        f.write("0")
+                except Exception:
+                    pass
+
+            # 2. Wayland DPMS On
+            for w in glob.glob("/run/user/*/wayland-*"):
+                if w.endswith(".lock"):
+                    continue
+                try:
+                    uid = w.split("/")[3]
+                    w_name = os.path.basename(w)
+                    env_vars = ["sudo", "-u", f"#{uid}", "env", f"XDG_RUNTIME_DIR=/run/user/{uid}", f"WAYLAND_DISPLAY={w_name}"]
+                    if os.path.isfile("/usr/bin/kscreen-doctor"):
+                        subprocess.run(env_vars + ["QT_QPA_PLATFORM=wayland", "kscreen-doctor", "--dpms", "on"],
+                                       check=False, timeout=2, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    if os.path.isfile("/usr/bin/wlopm"):
+                        subprocess.run(env_vars + ["wlopm", "--on", "*"],
+                                       check=False, timeout=2, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    bus = f"/run/user/{uid}/bus"
+                    if os.path.exists(bus):
+                        subprocess.run(
+                            env_vars + [f"DBUS_SESSION_BUS_ADDRESS=unix:path={bus}",
+                                        "busctl", "--user", "set-property", "org.gnome.Mutter.DisplayConfig",
+                                        "/org/gnome/Mutter/DisplayConfig", "org.gnome.Mutter.DisplayConfig", "PowerSaveMode", "i", "0"],
+                            check=False, timeout=1, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+                        )
+                except Exception:
+                    pass
+
+            # 3. X11 DPMS On
+            if os.path.isfile("/usr/bin/xset"):
+                for xsock in glob.glob("/tmp/.X11-unix/X*"):
+                    try:
+                        disp = ":" + os.path.basename(xsock)[1:]
+                        for bus in glob.glob("/run/user/*/bus"):
+                            uid = bus.split("/")[3]
+                            try:
+                                user_home = pwd.getpwuid(int(uid)).pw_dir
+                            except Exception:
+                                user_home = "/root"
+                            xauth = f"/run/user/{uid}/gdm/Xauthority"
+                            if not os.path.isfile(xauth) or os.path.getsize(xauth) == 0:
+                                xauth = os.path.join(user_home, ".Xauthority")
+                            if os.path.isfile(xauth) and os.path.getsize(xauth) > 0:
+                                base_cmd = ["sudo", "-u", f"#{uid}", "env", f"DISPLAY={disp}", f"XAUTHORITY={xauth}"]
+                            elif os.path.isfile(f"/var/run/lightdm/root/{disp}"):
+                                base_cmd = ["env", f"DISPLAY={disp}", f"XAUTHORITY=/var/run/lightdm/root/{disp}"]
+                            else:
+                                base_cmd = ["sudo", "-u", f"#{uid}", "env", f"DISPLAY={disp}", f"XAUTHORITY={xauth}"]
+                            subprocess.run(base_cmd + ["xset", "dpms", "force", "on"],
+                                           check=False, timeout=2, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    except Exception:
+                        pass
+
+    if do_backlight:
+        for b_file, val in saved_brightness.items():
+            if os.path.isfile(b_file):
+                try:
+                    with open(b_file, "w") as f:
+                        f.write(str(val if val > 0 else 50))
+                except Exception:
+                    pass
+
+
+def apply_power_saving(cfg):
+    """Freezes user applications and throttles CPU to minimum clock and single-core WFI."""
+    time.sleep(0.25)
+    saved_cpu_state = {}
+
+    # 1. Freeze cgroups v2 user apps
+    if cfg.get("SLEEP_FREEZE_PROCESSES", True):
+        for uid_dir in glob.glob("/sys/fs/cgroup/user.slice/user-*.slice/user@*.service/app.slice"):
+            freeze_path = os.path.join(uid_dir, "cgroup.freeze")
+            if os.path.exists(freeze_path):
+                try:
+                    with open(freeze_path, "w") as f:
+                        f.write("1")
+                except Exception:
+                    pass
+
+    # 2. Throttle CPU governor to powersave and minimum clock
+    if cfg.get("SLEEP_CPU_POWERSAVE", True):
+        seen_policies = set()
+        for cpu in sorted(glob.glob("/sys/devices/system/cpu/cpu[0-9]*/cpufreq")):
+            real_policy = os.path.realpath(cpu)
+            if real_policy in seen_policies:
+                continue
+            seen_policies.add(real_policy)
+
+            gov_path = os.path.join(real_policy, "scaling_governor")
+            min_path = os.path.join(real_policy, "cpuinfo_min_freq")
+            max_path = os.path.join(real_policy, "scaling_max_freq")
+            maxinfo_path = os.path.join(real_policy, "cpuinfo_max_freq")
+            if os.path.isfile(gov_path):
+                try:
+                    with open(gov_path, "r") as f:
+                        gov = f.read().strip()
+                    min_freq = None
+                    if os.path.isfile(min_path):
+                        with open(min_path, "r") as f:
+                            min_freq = f.read().strip()
+                    max_freq = None
+                    if os.path.isfile(max_path):
+                        with open(max_path, "r") as f:
+                            max_freq = f.read().strip()
+                    if (not max_freq or max_freq == min_freq) and os.path.isfile(maxinfo_path):
+                        with open(maxinfo_path, "r") as f:
+                            max_freq = f.read().strip()
+                    saved_cpu_state[real_policy] = {"gov": gov, "max_freq": max_freq}
+
+                    if min_freq and os.path.isfile(max_path):
+                        with open(max_path, "w") as f:
+                            f.write(min_freq)
+                    with open(gov_path, "w") as f:
+                        f.write("powersave")
+                except Exception:
+                    pass
+
+    # 3. Power-efficient kernel workqueues
+    wq_pe_path = "/sys/module/workqueue/parameters/power_efficient"
+    if cfg.get("SLEEP_WORKQUEUE_POWERSAVE", True) and os.path.isfile(wq_pe_path):
+        try:
+            with open(wq_pe_path, "r") as f:
+                saved_cpu_state["__wq_power_efficient__"] = f.read().strip()
+            with open(wq_pe_path, "w") as f:
+                f.write("Y")
+        except Exception:
+            pass
+
+    # 4. Single-Core WFI Parking (Pin cgroup slices, kernel workqueues & hardware IRQs to CPU0)
+    if cfg.get("SLEEP_CPU_PARKING", True):
+        saved_irqs = {}
+        for irq_dir in glob.glob("/proc/irq/[0-9]*"):
+            aff_file = os.path.join(irq_dir, "smp_affinity_list")
+            if not os.path.isfile(aff_file):
+                continue
+            for entry in glob.glob(os.path.join(irq_dir, "*")):
+                if not os.path.isdir(entry):
+                    continue
+                name = os.path.basename(entry)
+                if any(k in name for k in ("dwc2", "v3d", "vc4", "hvs", "mmc0", "mmc1", "rp1", "xhci")):
+                    try:
+                        with open(aff_file, "r") as f:
+                            saved_irqs[aff_file] = f.read().strip()
+                        with open(aff_file, "w") as f:
+                            f.write("0")
+                    except Exception:
+                        pass
+                    break
+        saved_cpu_state["__irq_affinities__"] = saved_irqs
+
+        try:
+            if os.path.isfile("/sys/fs/cgroup/cgroup.subtree_control"):
+                with open("/sys/fs/cgroup/cgroup.subtree_control", "w") as f:
+                    f.write("+cpuset")
+            for cg in ("/sys/fs/cgroup/user.slice", "/sys/fs/cgroup/system.slice", "/sys/fs/cgroup/init.scope"):
+                cpuset_file = os.path.join(cg, "cpuset.cpus")
+                if os.path.isfile(cpuset_file):
+                    with open(cpuset_file, "w") as f:
+                        f.write("0")
+            if os.path.isfile("/sys/devices/virtual/workqueue/cpumask"):
+                with open("/sys/devices/virtual/workqueue/cpumask", "w") as f:
+                    f.write("1")
+            os.sched_setaffinity(0, {0})
+        except Exception:
+            pass
+
+    return saved_cpu_state
+
+
+def restore_power(cfg, saved_cpu_state):
+    """Unfreezes applications and restores normal CPU clock and multi-core scheduling."""
+    if cfg.get("SLEEP_CPU_PARKING", True):
+        try:
+            all_cpus = "0-3"
+            if os.path.isfile("/sys/devices/system/cpu/present"):
+                with open("/sys/devices/system/cpu/present", "r") as f:
+                    all_cpus = f.read().strip() or "0-3"
+            for cg in ("/sys/fs/cgroup/user.slice", "/sys/fs/cgroup/system.slice", "/sys/fs/cgroup/init.scope"):
+                cpuset_file = os.path.join(cg, "cpuset.cpus")
+                if os.path.isfile(cpuset_file):
+                    with open(cpuset_file, "w") as f:
+                        f.write(all_cpus)
+            if os.path.isfile("/sys/devices/virtual/workqueue/cpumask"):
+                with open("/sys/devices/virtual/workqueue/cpumask", "w") as f:
+                    f.write("f")
+            os.sched_setaffinity(0, {0, 1, 2, 3})
+        except Exception:
+            pass
+
+        if isinstance(saved_cpu_state, dict) and "__irq_affinities__" in saved_cpu_state:
+            for aff_file, prev_aff in saved_cpu_state["__irq_affinities__"].items():
+                try:
+                    if os.path.isfile(aff_file) and prev_aff:
+                        with open(aff_file, "w") as f:
+                            f.write(prev_aff)
+                except Exception:
+                    pass
+
+    if isinstance(saved_cpu_state, dict) and "__wq_power_efficient__" in saved_cpu_state:
+        wq_pe_path = "/sys/module/workqueue/parameters/power_efficient"
+        prev_wq = saved_cpu_state["__wq_power_efficient__"]
+        if os.path.isfile(wq_pe_path) and prev_wq in ("Y", "N", "1", "0"):
+            try:
+                with open(wq_pe_path, "w") as f:
+                    f.write(prev_wq)
+            except Exception:
+                pass
+
+    # Unfreeze cgroups v2 user apps
+    if cfg.get("SLEEP_FREEZE_PROCESSES", True):
+        for uid_dir in glob.glob("/sys/fs/cgroup/user.slice/user-*.slice/user@*.service/app.slice"):
+            freeze_path = os.path.join(uid_dir, "cgroup.freeze")
+            if os.path.exists(freeze_path):
+                try:
+                    with open(freeze_path, "w") as f:
+                        f.write("0")
+                except Exception:
+                    pass
+
+    # Restore CPU clock and governors
+    if cfg.get("SLEEP_CPU_POWERSAVE", True):
+        seen_policies = set()
+        for cpu in sorted(glob.glob("/sys/devices/system/cpu/cpu[0-9]*/cpufreq")):
+            real_policy = os.path.realpath(cpu)
+            if real_policy in seen_policies:
+                continue
+            seen_policies.add(real_policy)
+
+            gov_path = os.path.join(real_policy, "scaling_governor")
+            min_path = os.path.join(real_policy, "cpuinfo_min_freq")
+            max_path = os.path.join(real_policy, "scaling_max_freq")
+            maxinfo_path = os.path.join(real_policy, "cpuinfo_max_freq")
+            try:
+                state = saved_cpu_state.get(real_policy, {}) if isinstance(saved_cpu_state, dict) else {}
+                gov = state.get("gov", "schedutil") if isinstance(state, dict) else "schedutil"
+                top_freq = state.get("max_freq") if isinstance(state, dict) else None
+
+                min_freq = None
+                if os.path.isfile(min_path):
+                    with open(min_path, "r") as f:
+                        min_freq = f.read().strip()
+
+                if (not top_freq or top_freq == min_freq) and os.path.isfile(maxinfo_path):
+                    with open(maxinfo_path, "r") as f:
+                        top_freq = f.read().strip()
+
+                if top_freq and os.path.isfile(max_path):
+                    with open(max_path, "w") as f:
+                        f.write(top_freq)
+
+                with open(gov_path, "w") as f:
+                    f.write(gov)
+            except Exception:
+                pass
+
+
+def find_pwmfan_hwmon():
+    """Finds the hwmon directory for the standard Linux PWM fan."""
+    for h in sorted(glob.glob("/sys/class/hwmon/hwmon*")):
+        try:
+            name_file = os.path.join(h, "name")
+            if os.path.isfile(name_file):
+                with open(name_file, "r") as f:
+                    if f.read().strip() == "pwmfan":
+                        return h
+        except Exception:
+            pass
+    return None
+
+
+def seed_thermal_cooling_state():
+    """Re-evaluates and seeds the pwm-fan thermal cooling device state for the current SoC temperature."""
+    try:
+        temp_file = "/sys/class/thermal/thermal_zone0/temp"
+        if not os.path.isfile(temp_file):
+            return
+        with open(temp_file, "r") as f:
+            cur_temp = int(f.read().strip())
+
+        active_trips = []
+        for tp_type in sorted(glob.glob("/sys/class/thermal/thermal_zone0/trip_point_*_type")):
+            try:
+                with open(tp_type, "r") as f:
+                    t_type = f.read().strip()
+                if t_type == "active":
+                    tp_temp_file = tp_type.replace("_type", "_temp")
+                    with open(tp_temp_file, "r") as f:
+                        tp_temp = int(f.read().strip())
+                    if tp_temp > 0:
+                        active_trips.append(tp_temp)
+            except Exception:
+                pass
+
+        active_trips.sort()
+        if not active_trips:
+            active_trips = [45000, 55000, 65000, 75000]
+
+        target_state = 0
+        for idx, trip_temp in enumerate(active_trips, start=1):
+            if cur_temp >= trip_temp:
+                target_state = idx
+
+        for cdev in glob.glob("/sys/class/thermal/cooling_device*"):
+            try:
+                type_file = os.path.join(cdev, "type")
+                if os.path.isfile(type_file):
+                    with open(type_file, "r") as f:
+                        if "fan" not in f.read().strip().lower():
+                            continue
+                max_st_file = os.path.join(cdev, "max_state")
+                cur_st_file = os.path.join(cdev, "cur_state")
+                if os.path.isfile(cur_st_file):
+                    max_st = 4
+                    if os.path.isfile(max_st_file):
+                        with open(max_st_file, "r") as f:
+                            max_st = int(f.read().strip())
+                    with open(cur_st_file, "w") as f:
+                        f.write(str(min(target_state, max_st)))
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+
+def set_fan_sleep_mode(cfg, sleep: bool, saved_state=None):
+    """Stops the PWM fan during sleep for 0 dB standby, and restores kernel thermal control on wakeup."""
+    if not cfg.get("SLEEP_FAN_SILENT", True):
+        return None
+    hwmon = find_pwmfan_hwmon()
+    if not hwmon:
+        return None
+    en_file = os.path.join(hwmon, "pwm1_enable")
+    pwm_file = os.path.join(hwmon, "pwm1")
+    if sleep:
+        state = {"hwmon": hwmon, "pwm1_enable": "2", "watchdog_active": False}
+        try:
+            if os.path.isfile(en_file):
+                with open(en_file, "r") as f:
+                    state["pwm1_enable"] = f.read().strip() or "2"
+                with open(en_file, "w") as f:
+                    f.write("1")
+            if os.path.isfile(pwm_file):
+                with open(pwm_file, "w") as f:
+                    f.write("0")
+        except Exception:
+            pass
+        return state
+    else:
+        try:
+            if os.path.isfile(en_file):
+                with open(en_file, "w") as f:
+                    f.write("2")
+            seed_thermal_cooling_state()
+        except Exception:
+            pass
+        return None
+
+
+def check_fan_thermal_watchdog(saved_fan_state, threshold_mc=68000):
+    """Built-in thermal safety watchdog during sleep."""
+    if not isinstance(saved_fan_state, dict):
+        return
+    try:
+        temp_file = "/sys/class/thermal/thermal_zone0/temp"
+        if not os.path.isfile(temp_file):
+            return
+        with open(temp_file, "r") as f:
+            cur_temp = int(f.read().strip())
+        hwmon = saved_fan_state.get("hwmon") or find_pwmfan_hwmon()
+        if not hwmon:
+            return
+        en_file = os.path.join(hwmon, "pwm1_enable")
+        pwm_file = os.path.join(hwmon, "pwm1")
+        if cur_temp >= threshold_mc and not saved_fan_state.get("watchdog_active"):
+            log(f"Thermal watchdog: SoC temp {cur_temp / 1000.0:.1f}C >= {threshold_mc / 1000.0:.1f}C in sleep, enabling fan")
+            if os.path.isfile(en_file):
+                with open(en_file, "w") as f:
+                    f.write("2")
+            seed_thermal_cooling_state()
+            saved_fan_state["watchdog_active"] = True
+        elif cur_temp < (threshold_mc - 10000) and saved_fan_state.get("watchdog_active"):
+            if os.path.isfile(en_file):
+                with open(en_file, "w") as f:
+                    f.write("1")
+            if os.path.isfile(pwm_file):
+                with open(pwm_file, "w") as f:
+                    f.write("0")
+            saved_fan_state["watchdog_active"] = False
+    except Exception:
+        pass
+
+
+def read_interrupt_counts():
+    """Returns a dictionary mapping IRQ labels to total interrupt count across all CPUs."""
+    irqs = {}
+    try:
+        with open("/proc/interrupts", "r") as f:
+            lines = f.read().splitlines()
+        if not lines:
+            return irqs
+        ncpus = len(lines[0].split())
+        for line in lines[1:]:
+            parts = line.split()
+            if not parts:
+                continue
+            counts = [int(x) for x in parts[1:1 + ncpus] if x.isdigit()]
+            if not counts:
+                continue
+            desc = " ".join(parts[1 + len(counts):])[-36:] or parts[0].rstrip(":")
+            irqs[f"{parts[0].rstrip(':')}({desc})"] = sum(counts)
+    except Exception:
+        pass
+    return irqs
+
+
+def log_wakeup_report(t_start, soc_start, irqs_start, t_end=None, irqs_end=None):
+    """Logs a concise 1-line standby summary (duration, battery delta & rate, top IRQs/s)."""
+    try:
+        end_ts = t_end if t_end is not None else time.monotonic()
+        elapsed_s = max(0.1, end_ts - t_start)
+        hours = elapsed_s / 3600.0
+        dur_str = f"{hours:.2f}h" if hours >= 0.1 else f"{elapsed_s:.1f}s"
+
+        soc_end = read_battery_soc()
+        if soc_start is not None and soc_end is not None:
+            diff = soc_end - soc_start
+            bat_str = f", battery {soc_start}% -> {soc_end}% ({diff:+d}%"
+            if hours >= 0.05 and soc_start > soc_end:
+                bat_str += f", {(soc_start - soc_end) / hours:.1f}%/h"
+            bat_str += ")"
+        else:
+            bat_str = ""
+
+        if irqs_end is None:
+            irqs_end = read_interrupt_counts()
+        deltas = sorted(
+            ((irqs_end[k] - irqs_start.get(k, 0), k) for k in irqs_end),
+            reverse=True
+        )[:5]
+        top_irqs = ", ".join(f"{k} {d / elapsed_s:.1f}/s" for d, k in deltas if d > 0)
+        irq_str = f"; top IRQs: {top_irqs}" if top_irqs else ""
+
+        log(f"Standby summary: {dur_str}{bat_str}{irq_str}")
+    except Exception:
+        pass
+
+
+def run_lid_daemon():
+    """
+    Lightweight epoll-based Hardware Lid Daemon (0% CPU usage).
+    Standard suspend & display reconfiguration on lid close are handled natively by
+    systemd-logind and the Desktop Environment (UPower / Mutter / Muffin / KWin).
+    This daemon only manages pure hardware sysfs power cuts for the physical lid
+    (internal panel backlight, internal DRM DPMS, and internal USB keyboard port).
+    """
+    lid_dev = get_lid_device_path()
+    set_usb_autosuspend(load_config())
+    if not lid_dev:
+        log("No hardware lid switch detected (Desktop Pi). Lid daemon exiting cleanly.")
+        sys.exit(0)
+
+    log(f"Starting Hardware Lid daemon on {lid_dev}")
+    epoll = select.epoll()
+    fd = os.open(lid_dev, os.O_RDONLY | os.O_NONBLOCK)
+    epoll.register(fd, select.EPOLLIN)
+
+    in_clamshell = False
+    clamshell_conns = []
+    saved_clamshell_brightness = {}
+
+    try:
+        while True:
+            events = epoll.poll(timeout=-1)
+            for ev_fd, event in events:
+                if event & (select.EPOLLHUP | select.EPOLLERR):
+                    time.sleep(1.0)
+                    continue
+                try:
+                    data = os.read(ev_fd, EVENT_SIZE * 16)
+                except Exception:
+                    continue
+                for i in range(0, len(data), EVENT_SIZE):
+                    chunk = data[i:i + EVENT_SIZE]
+                    if len(chunk) < EVENT_SIZE:
+                        continue
+                    sec, usec, ev_type, ev_code, ev_val = struct.unpack(EVENT_FORMAT, chunk)
+                    # EV_SW (5), SW_LID (0)
+                    if ev_type == 5 and ev_code == 0:
+                        cfg = load_config()
+                        if ev_val == 1:  # LID CLOSED
+                            internal_conns, external_conns = get_drm_connectors(cfg)
+                            if cfg.get("CLAMSHELL_ENABLE", True):
+                                log(f"Lid closed -> turning off internal hardware panel & keyboard ({internal_conns})")
+                                in_clamshell = True
+                                clamshell_conns = internal_conns
+                                if cfg.get("CLAMSHELL_RUN_HOOKS", True):
+                                    run_hooks("docked")
+                                saved_clamshell_brightness = blank_displays(
+                                    target_connectors=internal_conns,
+                                    external_connectors=external_conns,
+                                    do_dpms=cfg.get("CLAMSHELL_BLANK_INTERNAL_DISPLAY", True),
+                                    do_backlight=cfg.get("CLAMSHELL_DIM_INTERNAL_BACKLIGHT", True),
+                                )
+                                set_keyboard_and_custom_power(
+                                    cfg,
+                                    enable=False,
+                                    do_kbd_backlight=cfg.get("CLAMSHELL_DIM_KBD_BACKLIGHT", True),
+                                    do_custom_cuts=cfg.get("CLAMSHELL_DISABLE_INTERNAL_INPUT", True),
+                                )
+                        elif ev_val == 0:  # LID OPENED
+                            if in_clamshell:
+                                log("Lid opened -> restoring internal hardware panel & keyboard")
+                                set_keyboard_and_custom_power(
+                                    cfg,
+                                    enable=True,
+                                    do_kbd_backlight=cfg.get("CLAMSHELL_DIM_KBD_BACKLIGHT", True),
+                                    do_custom_cuts=cfg.get("CLAMSHELL_DISABLE_INTERNAL_INPUT", True),
+                                )
+                                restore_displays(
+                                    saved_clamshell_brightness,
+                                    target_connectors=clamshell_conns,
+                                    do_dpms=cfg.get("CLAMSHELL_BLANK_INTERNAL_DISPLAY", True),
+                                    do_backlight=cfg.get("CLAMSHELL_DIM_INTERNAL_BACKLIGHT", True),
+                                )
+                                if cfg.get("CLAMSHELL_RUN_HOOKS", True):
+                                    run_hooks("undocked")
+                                in_clamshell = False
+                                clamshell_conns = []
+                                saved_clamshell_brightness = {}
+    except KeyboardInterrupt:
+        pass
+    finally:
+        if in_clamshell:
+            cfg = load_config()
+            set_keyboard_and_custom_power(
+                cfg,
+                enable=True,
+                do_kbd_backlight=cfg.get("CLAMSHELL_DIM_KBD_BACKLIGHT", True),
+                do_custom_cuts=cfg.get("CLAMSHELL_DISABLE_INTERNAL_INPUT", True),
+            )
+            restore_displays(
+                saved_clamshell_brightness,
+                target_connectors=clamshell_conns,
+                do_dpms=cfg.get("CLAMSHELL_BLANK_INTERNAL_DISPLAY", True),
+                do_backlight=cfg.get("CLAMSHELL_DIM_INTERNAL_BACKLIGHT", True),
+            )
+        try:
+            epoll.unregister(fd)
+            os.close(fd)
+            epoll.close()
+        except Exception:
+            pass
+
+
+def list_profiles():
+    cfg = load_config()
+    active = cfg.get("PROFILE", "generic")
+    print("Available hardware profiles (/usr/share/rpi-suspend/profiles/):")
+    if not os.path.isdir(PROFILES_DIR):
+        print("  (No profiles directory found)")
+        return
+    for p in sorted(glob.glob(os.path.join(PROFILES_DIR, "*.conf"))):
+        name = os.path.splitext(os.path.basename(p))[0]
+        marker = "* " if name == active else "  "
+        desc = ""
+        try:
+            with open(p, "r") as f:
+                first_line = f.readline().strip()
+                if first_line.startswith("#"):
+                    desc = "— " + first_line.lstrip("#").strip()
+        except Exception:
+            pass
+        print(f"  {marker}{name:<16} {desc}")
+
+
+def set_profile(profile_name: str):
+    if os.geteuid() != 0:
+        print("Error: Setting the system profile requires root privileges (use sudo).", file=sys.stderr)
+        sys.exit(1)
+    profile_path = os.path.join(PROFILES_DIR, f"{profile_name}.conf")
+    if not os.path.isfile(profile_path):
+        print(f"Error: Profile '{profile_name}' not found in {PROFILES_DIR}.", file=sys.stderr)
+        list_profiles()
+        sys.exit(1)
+
+    if os.path.isfile(CONF_FILE):
+        with open(CONF_FILE, "r") as f:
+            content = f.read()
+        if re.search(r"^\s*#?\s*PROFILE\s*=", content, flags=re.MULTILINE):
+            content = re.sub(
+                r"^\s*#?\s*PROFILE\s*=.*$",
+                f'PROFILE="{profile_name}"',
+                content,
+                count=1,
+                flags=re.MULTILINE,
+            )
+        else:
+            content = f'PROFILE="{profile_name}"\n' + content
+
+        # Sync any boolean/int defaults defined in the selected profile into /etc/rpi-suspend.conf
+        prof_vals = {}
+        _parse_kv_file(profile_path, prof_vals)
+        for pk, pv in prof_vals.items():
+            if pk in BOOL_KEYS or pk in INT_KEYS:
+                val_str = str(pv).lower() if isinstance(pv, bool) else str(pv)
+                content = re.sub(
+                    rf"^\s*{re.escape(pk)}\s*=.*$",
+                    f"{pk}={val_str}",
+                    content,
+                    count=1,
+                    flags=re.MULTILINE,
+                )
+
+        with open(CONF_FILE, "w") as f:
+            f.write(content)
+    else:
+        os.makedirs(os.path.dirname(CONF_FILE), exist_ok=True)
+        with open(CONF_FILE, "w") as f:
+            f.write(f'PROFILE="{profile_name}"\n')
+
+    subprocess.run(["systemctl", "try-restart", "rpi-suspend-lid.service"], check=False)
+    print(f"[rpi-suspend] Active hardware profile set to '{profile_name}'.")
+
+
+def print_status():
+    cfg = load_config()
+    internal_conns, external_conns = get_drm_connectors(cfg)
+    print("=== rpi-suspend Status ===")
+    print(f"Active Profile            : {cfg.get('PROFILE', 'generic')}")
+    print(f"Lid State                 : {get_lid_state()} ({get_lid_device_path() or 'no lid sensor'})")
+    print(f"Internal Displays         : {internal_conns or 'none'} (pattern: '{cfg.get('INTERNAL_DISPLAY')}')")
+    print(f"External Displays         : {external_conns or 'none'}")
+    print(f"Battery SOC / AC          : {read_battery_soc()}% / AC={is_on_ac()}")
+    print("\n--- Mode 1: Deep Standby (SLEEP_*) ---")
+    for k in BOOL_KEYS:
+        if k.startswith("SLEEP_"):
+            print(f"  {k:<28} = {str(cfg.get(k)).lower()}")
+    print("\n--- Mode 2: Docked Clamshell (CLAMSHELL_*) ---")
+    for k in BOOL_KEYS:
+        if k.startswith("CLAMSHELL_"):
+            print(f"  {k:<28} = {str(cfg.get(k)).lower()}")
+    print("\n--- Mode 3: Wakeup Sources (WAKE_*) ---")
+    for k in BOOL_KEYS:
+        if k.startswith("WAKE_"):
+            print(f"  {k:<28} = {str(cfg.get(k)).lower()}")
+    print("\n--- Mode 4: Watchdogs & Hardware Quirks ---")
+    print(f"  WATCHDOG_THERMAL_ENABLE      = {str(cfg.get('WATCHDOG_THERMAL_ENABLE')).lower()} ({cfg.get('WATCHDOG_THERMAL_TEMP_MC', 68000) / 1000.0:.1f}°C)")
+    print(f"  WATCHDOG_BATTERY_ENABLE      = {str(cfg.get('WATCHDOG_BATTERY_ENABLE')).lower()} (max loss: {cfg.get('WATCHDOG_MAX_BATTERY_LOSS_PERCENT', 10)}%)")
+    print(f"  CUSTOM_POWER_CUT_PATHS       = {cfg.get('CUSTOM_POWER_CUT_PATHS') or 'none'}")
+    print(f"  CUSTOM_USBHID_UNBIND         = {cfg.get('CUSTOM_USBHID_UNBIND') or 'none'}")
+    print("==========================")
+
+
+def sig_handler(signum, frame):
+    raise KeyboardInterrupt()
+
+
+def main():
+    if len(sys.argv) > 1:
+        arg = sys.argv[1].lower()
+        if arg in ("--help", "-h", "help"):
+            print("Usage: rpi-suspend [suspend|status|profiles|set-profile <name>|lid-daemon|--help]")
+            print("Universal Userspace Suspend, Standby & Clamshell Manager for Raspberry Pi.")
+            sys.exit(0)
+        elif arg == "status":
+            print_status()
+            sys.exit(0)
+        elif arg in ("profiles", "list-profiles", "--list-profiles"):
+            list_profiles()
+            sys.exit(0)
+        elif arg in ("set-profile", "--set-profile", "--profile"):
+            if len(sys.argv) < 3:
+                print("Usage: sudo rpi-suspend set-profile <profile-name>", file=sys.stderr)
+                list_profiles()
+                sys.exit(1)
+            set_profile(sys.argv[2])
+            sys.exit(0)
+        elif arg in ("lid-daemon", "--lid-daemon"):
+            signal.signal(signal.SIGTERM, sig_handler)
+            signal.signal(signal.SIGINT, sig_handler)
+            run_lid_daemon()
+            sys.exit(0)
+        elif arg in ("--init-panel", "init-panel"):
+            sys.exit(0)
+
+    signal.signal(signal.SIGTERM, sig_handler)
+    signal.signal(signal.SIGINT, sig_handler)
+
+    cfg = load_config()
+    initial_lid = get_lid_state()
+    lid_was_closed = (initial_lid == "closed")
+    initial_soc = read_battery_soc()
+    on_ac_init = is_on_ac()
+
+    log(f"Entering suspend (profile: {cfg.get('PROFILE')}, lid: {initial_lid}, battery: {initial_soc}%, AC: {on_ac_init})")
+    try:
+        with open(ACTIVE_LOCK_FILE, "w") as f:
+            f.write(str(os.getpid()))
+    except Exception:
+        pass
+    if cfg.get("SLEEP_RUN_HOOKS", True):
+        run_hooks("pre")
+
+    saved_bt_blocked = get_radio_blocked("bluetooth")
+    saved_wifi_blocked = get_radio_blocked("wifi")
+    saved_wifi_powersave = get_wifi_power_save()
+    saved_audio_mute = get_audio_mute_state()
+
+    # 1. Pause active media players & mute sound
+    if cfg.get("SLEEP_PAUSE_MEDIA", True):
+        pause_media_players()
+    if cfg.get("SLEEP_MUTE_AUDIO", True):
+        mute_audio()
+
+    # 2. Lock screen
+    if cfg.get("SLEEP_LOCK_SCREEN", True):
+        lock_sessions()
+
+    # 3. Blank displays & dim backlights
+    saved_brightness = blank_displays(
+        target_connectors=None,
+        do_dpms=cfg.get("SLEEP_BLANK_DISPLAYS", True),
+        do_backlight=cfg.get("SLEEP_DIM_BACKLIGHT", True),
+    )
+
+    # 4. Freeze apps, throttle CPU & park cores
+    saved_cpu_state = apply_power_saving(cfg)
+
+    # 5. USB, Radio & Fan power savings
+    set_usb_autosuspend(cfg)
+    if cfg.get("SLEEP_WIFI_RFKILL", False) and not saved_wifi_blocked:
+        set_radio_power("wifi", False)
+    elif cfg.get("SLEEP_WIFI_POWERSAVE", True):
+        set_wifi_power_save(True)
+    if cfg.get("SLEEP_BLUETOOTH_RFKILL", False) and not saved_bt_blocked:
+        set_radio_power("bluetooth", False)
+    saved_fan_state = set_fan_sleep_mode(cfg, True)
+
+    # 6. Turn off keyboard backlight & custom power paths in sleep
+    set_keyboard_and_custom_power(
+        cfg,
+        enable=False,
+        do_kbd_backlight=cfg.get("SLEEP_DIM_KBD_BACKLIGHT", True),
+        do_custom_cuts=cfg.get("SLEEP_CUSTOM_POWER_CUTS", True),
+    )
+
+    # 7. Open input devices and wait via epoll (0% CPU, <1ms interrupt wake)
+    epoll = select.epoll()
+    open_fds = []
+    lid_dev_path = get_lid_device_path()
+    lid_fd = None
+
+    for dev in glob.glob("/dev/input/event*"):
+        try:
+            fd = os.open(dev, os.O_RDONLY | os.O_NONBLOCK)
+            epoll.register(fd, select.EPOLLIN)
+            open_fds.append(fd)
+            if dev == lid_dev_path:
+                lid_fd = fd
+        except Exception:
+            pass
+
+    last_watchdog_check = time.time()
+    # Allow USB port disconnects & autosuspend to settle (~0.6s) before sampling baseline sleep IRQs
+    time.sleep(0.6)
+    sleep_start_ts = time.monotonic()
+    initial_irqs = read_interrupt_counts()
+    sleep_end_ts = None
+    final_irqs = None
+    fan_thresh = cfg.get("WATCHDOG_THERMAL_TEMP_MC", 68000)
+
+    try:
+        while True:
+            events = epoll.poll(timeout=2.0)
+
+            now = time.time()
+            if (now - last_watchdog_check) >= 30.0:
+                last_watchdog_check = now
+                if cfg.get("WATCHDOG_THERMAL_ENABLE", True):
+                    check_fan_thermal_watchdog(saved_fan_state, threshold_mc=fan_thresh)
+
+                if cfg.get("WATCHDOG_BATTERY_ENABLE", True) and lid_was_closed and not is_on_ac():
+                    max_loss = cfg.get("WATCHDOG_MAX_BATTERY_LOSS_PERCENT", 10)
+                    if max_loss > 0 and initial_soc is not None:
+                        curr_soc = read_battery_soc()
+                        if curr_soc is not None:
+                            loss = initial_soc - curr_soc
+                            if loss >= max_loss:
+                                log(f"Standby battery loss reached {loss}% (limit {max_loss}%): powering off cleanly")
+                                subprocess.run(["systemctl", "poweroff"], check=False)
+                                break
+
+            if not events:
+                if lid_was_closed and cfg.get("WAKE_ON_LID_OPEN", True) and get_lid_state(lid_fd) == "open":
+                    log("Lid opened (fallback check) -> waking up")
+                    break
+                continue
+
+            wake = False
+            for fd, event in events:
+                if event & (select.EPOLLHUP | select.EPOLLERR):
+                    try:
+                        epoll.unregister(fd)
+                        os.close(fd)
+                        if fd in open_fds:
+                            open_fds.remove(fd)
+                    except Exception:
+                        pass
+                    continue
+
+                try:
+                    data = os.read(fd, EVENT_SIZE * 16)
+                    if not data:
+                        try:
+                            epoll.unregister(fd)
+                            os.close(fd)
+                            if fd in open_fds:
+                                open_fds.remove(fd)
+                        except Exception:
+                            pass
+                        continue
+
+                    for i in range(0, len(data), EVENT_SIZE):
+                        chunk = data[i:i + EVENT_SIZE]
+                        if len(chunk) < EVENT_SIZE:
+                            continue
+                        sec, usec, ev_type, ev_code, ev_val = struct.unpack(EVENT_FORMAT, chunk)
+
+                        # EV_SW (5), SW_LID (0) -> 0 = OPEN, 1 = CLOSED
+                        if ev_type == 5 and ev_code == 0:
+                            if ev_val == 0 and cfg.get("WAKE_ON_LID_OPEN", True):
+                                log("Lid opened -> waking up")
+                                wake = True
+                                break
+                            elif ev_val == 1:
+                                lid_was_closed = True
+
+                        # EV_KEY (1) -> 1 = key/button press
+                        elif ev_type == 1 and ev_val == 1:
+                            if ev_code in POWER_KEY_CODES:
+                                if cfg.get("WAKE_ON_POWER_BUTTON", True):
+                                    log(f"Power/Wake button pressed (code {ev_code}) -> waking up")
+                                    wake = True
+                                    break
+                            elif 0x110 <= ev_code <= 0x11f:
+                                if not lid_was_closed and cfg.get("WAKE_ON_MOUSE_CLICK", True):
+                                    log(f"Mouse click detected (button {ev_code}) -> waking up")
+                                    wake = True
+                                    break
+                            else:
+                                if cfg.get("WAKE_ON_KEYBOARD", True):
+                                    log(f"Keyboard key pressed (code {ev_code}) -> waking up")
+                                    wake = True
+                                    break
+
+                        # Mouse / Touchpad movement (EV_REL=2, EV_ABS=3)
+                        elif ev_type in (2, 3) and not lid_was_closed and cfg.get("WAKE_ON_MOUSE_MOVE", False):
+                            log("Pointer motion detected -> waking up")
+                            wake = True
+                            break
+                except Exception:
+                    pass
+
+            if wake:
+                break
+    except KeyboardInterrupt:
+        log("Sleep interrupted by signal -> waking up")
+    finally:
+        sleep_end_ts = time.monotonic()
+        final_irqs = read_interrupt_counts()
+        for fd in open_fds:
+            try:
+                epoll.unregister(fd)
+                os.close(fd)
+            except Exception:
+                pass
+        epoll.close()
+
+        # 1. Unfreeze user apps and restore multi-core CPU clock FIRST
+        restore_power(cfg, saved_cpu_state)
+        set_fan_sleep_mode(cfg, False, saved_fan_state)
+        time.sleep(0.05)
+
+        # 2. Restore displays (DPMS On & brightness)
+        restore_displays(
+            saved_brightness,
+            target_connectors=None,
+            do_dpms=cfg.get("SLEEP_BLANK_DISPLAYS", True),
+            do_backlight=cfg.get("SLEEP_DIM_BACKLIGHT", True),
+        )
+
+        # 3. Re-enable keyboard power, radios, audio, and run post hooks
+        set_keyboard_and_custom_power(
+            cfg,
+            enable=True,
+            do_kbd_backlight=cfg.get("SLEEP_DIM_KBD_BACKLIGHT", True),
+            do_custom_cuts=cfg.get("SLEEP_CUSTOM_POWER_CUTS", True),
+        )
+        if cfg.get("SLEEP_BLUETOOTH_RFKILL", False) and not saved_bt_blocked:
+            set_radio_power("bluetooth", True)
+        if cfg.get("SLEEP_WIFI_RFKILL", False) and not saved_wifi_blocked:
+            set_radio_power("wifi", True)
+        elif cfg.get("SLEEP_WIFI_POWERSAVE", True):
+            set_wifi_power_save(saved_wifi_powersave)
+        restore_audio(cfg, saved_audio_mute)
+        if cfg.get("SLEEP_RUN_HOOKS", True):
+            run_hooks("post")
+        try:
+            if os.path.exists(ACTIVE_LOCK_FILE):
+                os.remove(ACTIVE_LOCK_FILE)
+        except Exception:
+            pass
+        if cfg.get("LOG_WAKEUP_SUMMARY", True):
+            log_wakeup_report(sleep_start_ts, initial_soc, initial_irqs, t_end=sleep_end_ts, irqs_end=final_irqs)
+        log("Wakeup complete, normal power & display restored")
+
+    sys.exit(0)
+
+
+if __name__ == "__main__":
+    main()

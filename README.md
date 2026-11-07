@@ -46,7 +46,8 @@ The project is cleanly divided into **Core Hardware Packages** ([`src/`](src)) a
 | [**`argon-oneup-lid`**](src/argon-oneup-lid) | `all` | **Magnetic Lid Switch Overlay:** Configures GPIO 27 as a native Linux `SW_LID` input device via Device Tree overlay. |
 | [**`argon-oneup-sensors`**](src/argon-oneup-sensors) | `all` | **Hardware Sensors Mapping:** Standardizes `lm-sensors` physical hardware definitions (`/etc/sensors.d/argon-oneup.conf`) for CPU thermal, RP1, PWM Fan RPM, NVMe SSD temperature, and CW2217 battery telemetry across all Linux distributions. |
 | [**`argon-oneup-power-profiles`**](src/argon-oneup-power-profiles) | `all` | **ARM64 Power Profiles Daemon:** Implements `org.freedesktop.UPower.PowerProfiles` / `net.hadess.PowerProfiles` D-Bus APIs to manage `schedutil`/`performance`/`powersave` CPU governors, PCIe ASPM, Wi-Fi power saving, and display backlight states. |
-| [**`argon-oneup-suite`**](src/argon-oneup-suite) | `all` | **Core Metapackage:** Installs all 6 core hardware packages above with a single command. 100% system-agnostic and clean: modifies no third-party system components. |
+| [**`rpi-suspend`**](src/rpi-suspend) | `all` | **Universal Standby & Sleep Manager:** Deep userspace suspend (`cgroups v2` freeze, single-core WFI + IRQ parking on `CPU0`, USB autosuspend, DPMS off) with instant lid-open & keyboard wake. Drop-in replacement for legacy `rpi-fake-sleep`. |
+| [**`argon-oneup-suite`**](src/argon-oneup-suite) | `all` | **Core Metapackage:** Installs all 7 core packages above with a single command. 100% system-agnostic and clean: modifies no third-party system components. |
 
 ### Extras: Optional Standby, Hardware Fixes & Desktop Widgets ([`extras/`](extras))
 
@@ -154,6 +155,7 @@ sudo apt install ./argon-oneup-essentials_*.deb \
                  ./argon-oneup-lid_*.deb \
                  ./argon-oneup-sensors_*.deb \
                  ./argon-oneup-power-profiles_*.deb \
+                 ./rpi-suspend_*.deb \
                  ./argon-oneup-suite_*.deb
 ```
 
