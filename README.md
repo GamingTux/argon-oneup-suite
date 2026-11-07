@@ -47,14 +47,14 @@ The project is cleanly divided into **Core Hardware Packages** ([`src/`](src)) a
 | [**`argon-oneup-sensors`**](src/argon-oneup-sensors) | `all` | **Hardware Sensors Mapping:** Standardizes `lm-sensors` physical hardware definitions (`/etc/sensors.d/argon-oneup.conf`) for CPU thermal, RP1, PWM Fan RPM, NVMe SSD temperature, and CW2217 battery telemetry across all Linux distributions. |
 | [**`argon-oneup-power-profiles`**](src/argon-oneup-power-profiles) | `all` | **ARM64 Power Profiles Daemon:** Implements `org.freedesktop.UPower.PowerProfiles` / `net.hadess.PowerProfiles` D-Bus APIs to manage `schedutil`/`performance`/`powersave` CPU governors, PCIe ASPM, Wi-Fi power saving, and display backlight states. |
 | [**`rpi-suspend`**](src/rpi-suspend) | `all` | **Universal Standby & Sleep Manager:** Deep userspace suspend (`cgroups v2` freeze, single-core WFI + IRQ parking on `CPU0`, USB autosuspend, DPMS off) with instant lid-open & keyboard wake. Drop-in replacement for legacy `rpi-fake-sleep`. |
-| [**`argon-oneup-suite`**](src/argon-oneup-suite) | `all` | **Core Metapackage:** Installs all 7 core packages above with a single command. 100% system-agnostic and clean: modifies no third-party system components. |
+| [**`rpi-vc4-edp`**](src/rpi-vc4-edp) | `all` | **Automatic Kernel eDP-1 Display Patcher:** Automatically patches and builds the `vc4` DRM driver across every kernel upgrade to expose internal HDMI laptop panels as native `eDP-1`. Fixes clamshell suspend, eliminates Wayland crashes, and auto-retires once upstream PR #7732 is released. |
+| [**`cm5-mmc-fix`**](src/cm5-mmc-fix) | `all` | **CM5 Empty MicroSD Slot Shutdown Fix:** Patches the BCM2712 SDHCI rescan timeout table (`mmc_rescan freqs[]`) and applies `cm5-sdcard-fast.dtbo` across kernel upgrades to eliminate the 30–80s shutdown hang. |
+| [**`argon-oneup-suite`**](src/argon-oneup-suite) | `all` | **Core Metapackage:** Installs all 9 core packages above with a single command. 100% system-agnostic and clean: modifies no third-party system components. |
 
-### Extras: Optional Standby, Hardware Fixes & Desktop Widgets ([`extras/`](extras))
+### Extras: Optional Desktop Extensions & UI Applets ([`extras/`](extras))
 
 | Package | Target System / Desktop | Arch | Description |
 | :--- | :---: | :---: | :--- |
-| [**`rpi-vc4-edp`**](extras/rpi-vc4-edp) | **Raspberry Pi CM4 / CM5 Laptops** | `all` | **Automatic Kernel eDP-1 Display Patcher:** Automatically patches and builds the `vc4` DRM driver across every kernel upgrade to expose internal HDMI laptop panels as native `eDP-1`. Fixes clamshell suspend, eliminates Wayland crashes, and auto-retires once upstream PR #7732 is released. |
-| [**`cm5-mmc-fix`**](extras/cm5-mmc-fix) | **Raspberry Pi CM5 Lite** | `all` | **CM5 Empty MicroSD Slot Shutdown Fix:** Patches the BCM2712 SDHCI rescan timeout table (`mmc_rescan freqs[]`) and applies `cm5-sdcard-fast.dtbo` across kernel upgrades to eliminate the 30–80s shutdown hang. |
 | [**`ksystemstats-rpi5-fix`**](extras/ksystemstats-rpi5-fix) | **KDE Plasma 6** | `arm64` | **KDE Plasma 6 Systemmonitor ksystemstats Fix:** Resolves the KDE Plasma 6 `ksystemstats` ARM64 `/proc/cpuinfo` deadlock ([KDE Bug #493093](https://bugs.kde.org/show_bug.cgi?id=493093)) via private mount namespace and maps `cpu_thermal` to CPU sensor cards. |
 | [**`rpi-pishutdown`**](extras/rpi-pishutdown) | **Raspberry Pi OS** (`rpd-labwc` / `LXDE`) | `all` | **Standby-Enabled Shutdown Dialog:** Drop-in `dpkg-divert` upgrade for `/usr/bin/pishutdown` on Raspberry Pi OS. Adds a dedicated "Standby (Ruhezustand)" button that triggers `systemctl suspend` via [**`rpi-suspend`**](https://github.com/GamingTux/rpi-suspend). |
 | [**`argon-wfplug-batt`**](extras/argon-wfplug-batt) | **Raspberry Pi OS** (`rpd-labwc` / `wf-panel-pi`) | `arm64` | **Enhanced Battery Telemetry Widget:** Drop-in upgrade for `wf-panel-pi`'s `libbatt.so`. Displays complete `/sys/class/power_supply/BAT*` telemetry on mouseover (status, smoothed runtime, Watts, Amps, Voltage + bounds, Wh & mAh, Health %, Cycle Count, Temperature, Model) and fixes upstream Cairo surface memory leaks. |
@@ -156,6 +156,8 @@ sudo apt install ./argon-oneup-essentials_*.deb \
                  ./argon-oneup-sensors_*.deb \
                  ./argon-oneup-power-profiles_*.deb \
                  ./rpi-suspend_*.deb \
+                 ./rpi-vc4-edp_*.deb \
+                 ./cm5-mmc-fix_*.deb \
                  ./argon-oneup-suite_*.deb
 ```
 

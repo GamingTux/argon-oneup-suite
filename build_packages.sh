@@ -45,15 +45,15 @@ if command -v dtc >/dev/null 2>&1; then
     dtc -@ -I dts -O dtb -Wno-gpios_property \
         -o "${SRC_DIR}/argon-oneup-battery/usr/share/argon-oneup/overlays/argon-oneup-battery.dtbo" \
         "${SRC_DIR}/argon-oneup-battery/usr/share/argon-oneup/dts/argon-oneup-battery.dts"
-    if [ -f "${EXTRAS_SRC_DIR}/cm5-mmc-fix/usr/share/cm5-mmc-fix/cm5-sdcard-fast.dts" ]; then
+    if [ -f "${SRC_DIR}/cm5-mmc-fix/usr/share/cm5-mmc-fix/cm5-sdcard-fast.dts" ]; then
         dtc -@ -I dts -O dtb -Wno-gpios_property \
-            -o "${EXTRAS_SRC_DIR}/cm5-mmc-fix/usr/share/cm5-mmc-fix/overlays/cm5-sdcard-fast.dtbo" \
-            "${EXTRAS_SRC_DIR}/cm5-mmc-fix/usr/share/cm5-mmc-fix/cm5-sdcard-fast.dts"
+            -o "${SRC_DIR}/cm5-mmc-fix/usr/share/cm5-mmc-fix/overlays/cm5-sdcard-fast.dtbo" \
+            "${SRC_DIR}/cm5-mmc-fix/usr/share/cm5-mmc-fix/cm5-sdcard-fast.dts"
     fi
-    if [ -f "${EXTRAS_SRC_DIR}/rpi-vc4-edp/usr/share/rpi-vc4-edp/dts/argon-oneup-display.dts" ]; then
+    if [ -f "${SRC_DIR}/rpi-vc4-edp/usr/share/rpi-vc4-edp/dts/argon-oneup-display.dts" ]; then
         dtc -@ -I dts -O dtb -Wno-gpios_property \
-            -o "${EXTRAS_SRC_DIR}/rpi-vc4-edp/usr/share/rpi-vc4-edp/overlays/argon-oneup-display.dtbo" \
-            "${EXTRAS_SRC_DIR}/rpi-vc4-edp/usr/share/rpi-vc4-edp/dts/argon-oneup-display.dts"
+            -o "${SRC_DIR}/rpi-vc4-edp/usr/share/rpi-vc4-edp/overlays/argon-oneup-display.dtbo" \
+            "${SRC_DIR}/rpi-vc4-edp/usr/share/rpi-vc4-edp/dts/argon-oneup-display.dts"
     fi
 fi
 
@@ -104,7 +104,7 @@ package_dir() {
     rm -rf "${stage_dir}"
 }
 
-for pkg in argon-oneup-essentials argon-oneup-backlight argon-oneup-battery argon-oneup-lid argon-oneup-sensors argon-oneup-power-profiles rpi-suspend argon-oneup-suite; do
+for pkg in argon-oneup-essentials argon-oneup-backlight argon-oneup-battery argon-oneup-lid argon-oneup-sensors argon-oneup-power-profiles rpi-suspend rpi-vc4-edp cm5-mmc-fix argon-oneup-suite; do
     PKG_PATH="${SRC_DIR}/${pkg}"
     if [ -d "${PKG_PATH}" ]; then
         package_dir "${PKG_PATH}" "${DIST_DIR}" "${pkg}"
@@ -113,7 +113,7 @@ done
 
 echo "=== Building Argon ONE UP Extras (Optional Fixes, Standby, Widgets & Applets) ==="
 
-for pkg in argon-oneup-plasma-widget argon-wfplug-batt cm5-mmc-fix ksystemstats-rpi5-fix rpi-pishutdown rpi-vc4-edp; do
+for pkg in argon-oneup-plasma-widget argon-wfplug-batt ksystemstats-rpi5-fix rpi-pishutdown; do
     PKG_PATH="${EXTRAS_SRC_DIR}/${pkg}"
     if [ -d "${PKG_PATH}" ]; then
         package_dir "${PKG_PATH}" "${EXTRAS_DIST_DIR}" "${pkg}"
