@@ -19,16 +19,13 @@ Out of the box, standard Linux distributions (LMPE / Linux Mint Pi Edition, Rasp
 * **🔋 Native Kernel Battery & AC Driver (`CW2217` Fuel Gauge at `0x64`):** Exposes `BAT0` and `AC0` via the standard Linux `power_supply` subsystem using atomic 16-bit SMBus word transfers (`i2c_smbus_read_word_swapped`). Reports state of charge (`%`), EMA-smoothed remaining runtime (`time_to_empty_avg`), real-time power draw (`W`), current (`A`, `current_now` & `current_avg`), pack voltage (`V`), energy (`53.28 Wh`) and charge capacity (`4800 mAh`), battery temperature (`°C`), state of health (`%`), and charge cycle count (`cycle_count`), with configurable critical low-battery auto-shutdown.
 * **💡 Hardware Display Backlight (`DDC/CI` on I2C Bus 14):** Maps the internal laptop panel's DDC/CI brightness register (`0x10`) to `/sys/class/backlight/ddcci*`, enabling native brightness hotkeys (`Fn` + Brightness Up/Down), desktop sliders, and OSD notifications across Labwc, Wayfire, Cinnamon, KDE Plasma, and GNOME.
 * **💻 Magnetic Hall-Effect Lid Switch (`GPIO 27`):** Device Tree overlay (`argon-oneup-lid.dtbo`) binds the physical lid sensor to `gpio-keys` (`EV_SW` / `SW_LID`), triggering native `systemd-logind` lid-close actions and instant lid-open wakeup.
-* **📡 Hardware Essentials & Fast Boot (`argon-oneup-essentials`):**
+* **📡 Hardware Essentials & APT Repository (`argon-oneup-essentials`):**
   * **External Display-Lid Wi-Fi/BT Antenna (`dtparam=ant2`):** Switches the CM5 wireless module from the internal PCB trace antenna (shielded inside the aluminum chassis) to the high-gain external antenna inside the display lid.
   * **PCIe Gen 3 NVMe Speed (`dtparam=nvme`, `pciex1_gen=3`):** Unlocks full ~900 MB/s M.2 NVMe SSD throughput (Speed 8 GT/s, Width x1).
-  * **2.8 GHz CPU Boost & Quiet 4-Stage Blower Fan Curve (`arm_freq=2800`):** Configures stable 2.80 GHz Cortex-A76 boost clock and a 4-stage active blower fan curve (`40 / 50 / 60 / 70 °C` with `5 °C` hysteresis), idling at a cool ~39 °C.
-  * **Sub-6-Second Fast Boot (~5.8s):** Eliminates boot delays by disabling unrouted CSI camera probing (`camera_auto_detect=0`), DSI display probing (`display_auto_detect=0`), unrouted UART0 (`dtparam=uart0=off`), and automatically pruning unrouted `console=serial0` from `cmdline.txt`.
-  * **Bootloader EEPROM Tuning:** Configures 5A PMIC power profile (`PSU_MAX_CURRENT=5000`), true PMIC rail halt power-off (`POWER_OFF_ON_HALT=1`), and BCM2712 8-bank LPDDR4X memory interleaving (`SDRAM_BANKLOW=1`) for +15–25% memory bandwidth.
-  * **Internal USB Audio & Webcam Routing:** Configures WirePlumber (`90-argon-oneup.conf`) to route primary audio through the internal USB DAC (headphone jack/speakers), blacklists unused CSI ISP nodes (`pisp_be`), and applies SunplusIT PC Camera USB audio quirks.
-  * **Touchpad Tap-to-Click:** Preconfigures libinput tap-to-click and tap-dragging via `/etc/X11/xorg.conf.d/90-argon-oneup.conf`.
-  * **Gigabit Ethernet PHY Low-Power Suspend:** Automatically suspends the unpopulated CM5 onboard BCM54213PE Ethernet PHY to save ~300 mW of battery power.
-  * **Single Centralized Configuration:** Easily customized via `/etc/argon-oneup.conf`.
+  * **Hardware I2C Enablement (`dtparam=i2c_arm=on`):** Enables the SoC I2C bus required for the battery gauge (CW2217) and display DDC/CI backlight.
+  * **Quiet 4-Stage Blower Fan Curve:** Configures a quiet 4-stage active blower fan curve (`40 / 50 / 60 / 70 °C` with `5 °C` hysteresis), idling at a cool ~39 °C.
+  * **Official APT Repository:** Automatically installs the official repository sources and signing keyring for updates.
+  * **Single Hardware Configuration:** Cleanly managed via `/etc/argon-oneup.conf`.
 * **⚡ Dynamic ARM64 Power Profiles (`argon-oneup-power-profiles`):** Drop-in D-Bus replacement for `power-profiles-daemon` (`power-saver` @ 1.5 GHz, `balanced` @ dynamic `schedutil` 2.8 GHz, `performance` @ locked 2.8 GHz) with dynamic PCIe ASPM switching, automatic AC/battery profile switching, and per-profile display brightness memory.
 * **💤 Low-Power Standby / Sleep ([`rpi-suspend`](https://github.com/GamingTux/rpi-suspend)):** Universal userspace sleep manager for Raspberry Pi 5 / CM5 where ACPI S3 is unavailable. Freezes user processes via `cgroups v2`, parks CPU cores C1–C3 in hardware `WFI` on `CPU0`, puts the internal USB 2.0 host tree and unused Ethernet PHY into power-down, blanks display via DRM DPMS, and wakes in **< 1 ms** on lid open or keypress.
 * **🛠️ Raspberry Pi CM5 Lite Shutdown Hang Fix (`cm5-mmc-fix` in Extras):** Eliminates the 30–80 second shutdown/reboot hang caused by the BCM2712 SDHCI 100 kHz hardware timeout when the microSD slot is empty.
@@ -43,7 +40,7 @@ The project is cleanly divided into **Core Hardware Packages** ([`src/`](src)) a
 
 | Package | Arch | Description |
 | :--- | :---: | :--- |
-| [**`argon-oneup-essentials`**](src/argon-oneup-essentials) | `all` | **Hardware Setup & Fast Boot:** Configures external lid antenna (`ant2`), PCIe Gen 3 NVMe, 2.8 GHz boost, 4-stage quiet blower fan curve, EEPROM tuning (`PSU_MAX_CURRENT=5000`, `POWER_OFF_ON_HALT=1`, `SDRAM_BANKLOW=1`), unrouted probe disabling (~5.8s boot), unpopulated eth0 PHY suspend (-300mW), WirePlumber USB DAC audio routing, USB webcam quirk, and touchpad tap-to-click. Managed via `/etc/argon-oneup.conf`. |
+| [**`argon-oneup-essentials`**](src/argon-oneup-essentials) | `all` | **Hardware Setup & APT Repository:** Configures external lid antenna (`ant2`), PCIe Gen 3 NVMe, hardware I2C (`i2c_arm=on`), 4-stage quiet blower fan curve, and official APT repository keyring and sources list. Managed cleanly via `/etc/argon-oneup.conf`. |
 | [**`argon-oneup-battery`**](src/argon-oneup-battery) | `all` | **Kernel Battery & AC Driver (`oneUpPower` DKMS) & Power Benchmark:** Native Linux `power_supply` driver for the CW2217 fuel gauge (`0x64`). Exports `BAT0` and `AC0` with atomic 16-bit SMBus reads, EMA-smoothed runtime estimation, 53.28 Wh & 4800 mAh capacity, cycle count, SOH %, temperature, and critical low-battery shutdown. Includes the `argon-power-bench` hardware power benchmark utility. |
 | [**`argon-oneup-backlight`**](src/argon-oneup-backlight) | `all` | **DDC/CI Display Backlight Bridge:** Exposes the internal display on I2C bus 14 as `/sys/class/backlight/ddcci*` for universal brightness keys and desktop sliders. |
 | [**`argon-oneup-lid`**](src/argon-oneup-lid) | `all` | **Magnetic Lid Switch Overlay:** Configures GPIO 27 as a native Linux `SW_LID` input device via Device Tree overlay. |
@@ -66,36 +63,24 @@ The project is cleanly divided into **Core Hardware Packages** ([`src/`](src)) a
 
 ## ⚙️ Hardware Configuration (`/etc/argon-oneup.conf`)
 
-All laptop hardware features are cleanly managed through a single centralized configuration file:
+All laptop hardware features are cleanly managed through a single configuration file:
 
 ```bash
 sudo nano /etc/argon-oneup.conf
 ```
 
 ```ini
-# Maximum CPU frequency in MHz for Compute Module 5 (Default: 2800, Stock: 2400)
-ARM_FREQ=2800
-
 # Use external Wi-Fi/Bluetooth antenna in the display lid (dtparam=ant2)
 ENABLE_ANT2=1
 
 # Enable M.2 NVMe slot at PCIe Gen 3 speed (8 GT/s, ~900 MB/s)
-ENABLE_NVME_GEN3=1
+ENABLE_NVME=1
+
+# Enable hardware I2C bus (dtparam=i2c_arm=on) for battery gauge & display backlight
+ENABLE_I2C=1
 
 # Apply Argon ONE UP 4-stage quiet blower fan curve (40C/50C/60C/70C with 5C hysteresis)
 ENABLE_FAN_CURVE=1
-
-# Disable camera auto-detection (CSI I2C probe). Laptop uses internal USB webcam
-DISABLE_CAMERA_PROBE=1
-
-# Disable display auto-detection (DSI probe). Laptop uses internal HDMI bridge display
-DISABLE_DISPLAY_PROBE=1
-
-# Disable unrouted UART0 (GPIO 14/15) and remove serial console from cmdline.txt
-DISABLE_UART=1
-
-# Put unpopulated CM5 Gigabit Ethernet PHY into MDIO BMCR_PDOWN suspend (-0.3W)
-DISABLE_UNUSED_ETHERNET=1
 ```
 
 Apply any changes instantly without rebooting:

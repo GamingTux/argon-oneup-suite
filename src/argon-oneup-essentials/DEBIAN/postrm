@@ -7,11 +7,6 @@ if [ "$1" = "remove" ] || [ "$1" = "purge" ]; then
             sed -i '/^# --- BEGIN ARGON-ONEUP-ESSENTIALS ---$/,/^# --- END ARGON-ONEUP-ESSENTIALS ---$/d' "$cfg" 2>/dev/null || true
         fi
     done
-    rm -f /boot/firmware/overlays/cm5-disable-ethernet.dtbo /boot/overlays/cm5-disable-ethernet.dtbo 2>/dev/null || true
-    if [ -f /etc/default/irqbalance ] && grep -q "argon-oneup-irq-policy" /etc/default/irqbalance; then
-        sed -i '/argon-oneup-irq-policy/d' /etc/default/irqbalance 2>/dev/null || true
-        systemctl try-restart irqbalance.service 2>/dev/null || true
-    fi
 fi
 
 exit 0

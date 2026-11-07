@@ -6,42 +6,14 @@ if [ ! -f "$CONF_FILE" ] && [ -f "/etc/argon-oneup-essentials.conf" ]; then
     CONF_FILE="/etc/argon-oneup-essentials.conf"
 fi
 
-ARM_FREQ=2800
 ENABLE_ANT2=1
-ENABLE_NVME_GEN3=1
+ENABLE_NVME=1
+ENABLE_I2C=1
 ENABLE_FAN_CURVE=1
-DISABLE_CAMERA_PROBE=1
-DISABLE_DISPLAY_PROBE=1
-DISABLE_UART=1
-DISABLE_UNUSED_ETHERNET=1
 
 if [ -f "$CONF_FILE" ]; then
     # shellcheck disable=SC1090
     . "$CONF_FILE"
-fi
-
-is_chroot() {
-    [ "$(stat -c %d:%i / 2>/dev/null)" != "$(stat -c %d:%i /proc/1/root/. 2>/dev/null)" ]
-}
-
-apply_runtime_eth() {
-    if is_chroot; then
-        return 0
-    fi
-    # Put unpopulated CM5 Gigabit Ethernet PHY into MDIO BMCR_PDOWN suspend (-0.3W)
-    # Only bring eth0 down if it is the internal RP1 macb controller and has no active link/IP
-    if [ "${DISABLE_UNUSED_ETHERNET:-1}" = "1" ] && [ -d /sys/class/net/eth0 ]; then
-        ETH_DRV=$(basename "$(readlink -f /sys/class/net/eth0/device/driver 2>/dev/null)" 2>/dev/null || true)
-        ETH_CARRIER=$(cat /sys/class/net/eth0/carrier 2>/dev/null || echo 0)
-        if [ "$ETH_DRV" = "macb" ] && [ "$ETH_CARRIER" != "1" ] && ! /sbin/ip -4 addr show dev eth0 2>/dev/null | grep -q "inet "; then
-            /sbin/ip link set dev eth0 down 2>/dev/null || true
-        fi
-    fi
-}
-
-if [ "${1:-}" = "--runtime" ]; then
-    apply_runtime_eth
-    exit 0
 fi
 
 BOOT_CFG=""
@@ -51,129 +23,63 @@ elif [ -f /boot/config.txt ]; then
     BOOT_CFG="/boot/config.txt"
 fi
 
-CMDLINE_TXT=""
-if [ -f /boot/firmware/cmdline.txt ]; then
-    CMDLINE_TXT="/boot/firmware/cmdline.txt"
-elif [ -f /boot/cmdline.txt ]; then
-    CMDLINE_TXT="/boot/cmdline.txt"
-fi
-
 remove_block() {
     if [ -n "$BOOT_CFG" ] && [ -f "$BOOT_CFG" ]; then
         sed -i '/^# --- BEGIN ARGON-ONEUP-ESSENTIALS ---$/,/^# --- END ARGON-ONEUP-ESSENTIALS ---$/d' "$BOOT_CFG" 2>/dev/null || true
     fi
 }
 
-remove_runtime_tweaks() {
-    rm -f /boot/firmware/overlays/cm5-disable-ethernet.dtbo /boot/overlays/cm5-disable-ethernet.dtbo 2>/dev/null || true
-    if [ -L /etc/systemd/zram-generator.conf.d/20-rpi-swap-zram0-ctrl.conf ]; then
-        rm -f /etc/systemd/zram-generator.conf.d/20-rpi-swap-zram0-ctrl.conf 2>/dev/null || true
-    fi
-    if [ -L /etc/systemd/system/NetworkManager-wait-online.service ]; then
-        rm -f /etc/systemd/system/NetworkManager-wait-online.service 2>/dev/null || true
-    fi
-    if [ -L /etc/systemd/system/systemd-networkd-wait-online.service ]; then
-        rm -f /etc/systemd/system/systemd-networkd-wait-online.service 2>/dev/null || true
-    fi
-    if [ -f /etc/default/irqbalance ] && grep -q "argon-oneup-irq-policy" /etc/default/irqbalance; then
+cleanup_obsolete_configs() {
+    # Remove obsolete files from legacy versions
+    rm -f /etc/modprobe.d/argon-oneup.conf \
+          /etc/NetworkManager/conf.d/90-argon-oneup.conf \
+          /etc/wireplumber/wireplumber.conf.d/90-argon-oneup.conf \
+          /etc/X11/xorg.conf.d/90-argon-oneup.conf \
+          /usr/sbin/argononeup-eepromconfig.py \
+          /etc/argon-oneup-essentials.conf \
+          /boot/firmware/overlays/cm5-disable-ethernet.dtbo \
+          /boot/overlays/cm5-disable-ethernet.dtbo \
+          /etc/sysctl.d/90-argon-oneup-essentials.conf \
+          /etc/sysctl.d/99-z-argon-oneup-essentials.conf \
+          /etc/systemd/zram-generator.conf.d/90-argon-oneup.conf \
+          /etc/systemd/journald.conf.d/90-argon-oneup.conf \
+          /etc/udev/rules.d/90-argon-storage-io.rules \
+          /etc/X11/xorg.conf.d/99-v3d.conf \
+          /etc/X11/xorg.conf.d/50-touchpad-tapping.conf \
+          /etc/pipewire/pipewire.conf.d/10-audio-tuning.conf \
+          /etc/modprobe.d/argon-webcam-audio.conf \
+          /etc/modprobe.d/argon-hardware-blacklist.conf \
+          /etc/wireplumber/wireplumber.conf.d/50-disable-internal-hdmi-audio.conf \
+          /etc/NetworkManager/conf.d/90-argon-oneup-wifi.conf \
+          /usr/bin/argon-oneup-irq-policy 2>/dev/null || true
+
+    if [ -f /etc/default/irqbalance ] && grep -q "argon-oneup-irq-policy" /etc/default/irqbalance 2>/dev/null; then
         sed -i '/argon-oneup-irq-policy/d' /etc/default/irqbalance 2>/dev/null || true
-        systemctl try-restart irqbalance.service 2>/dev/null || true
     fi
 }
 
 if [ "${1:-}" = "--remove" ]; then
     remove_block
-    remove_runtime_tweaks
     exit 0
 fi
 
-# Clean up obsolete files from older package versions (consolidated into unified argon-oneup.conf names)
-rm -f /boot/firmware/overlays/cm5-disable-ethernet.dtbo /boot/overlays/cm5-disable-ethernet.dtbo 2>/dev/null || true
-rm -f /etc/sysctl.d/90-argon-oneup-essentials.conf /etc/sysctl.d/99-z-argon-oneup-essentials.conf 2>/dev/null || true
-rm -f /etc/modules-load.d/argon-bbr.conf 2>/dev/null || true
-rm -f /etc/systemd/zram-generator.conf.d/90-argon-oneup.conf 2>/dev/null || true
-rm -f /etc/systemd/journald.conf.d/90-argon-oneup.conf 2>/dev/null || true
-rm -f /etc/systemd/system/fstrim.timer.d/acpower.conf 2>/dev/null || true
-rm -f /etc/profile.d/cm5-cortex-a76.sh 2>/dev/null || true
-rm -f /etc/udev/rules.d/90-argon-storage-io.rules 2>/dev/null || true
-rm -f /etc/X11/xorg.conf.d/99-v3d.conf /etc/X11/xorg.conf.d/50-touchpad-tapping.conf 2>/dev/null || true
-rm -f /etc/pipewire/pipewire.conf.d/10-audio-tuning.conf 2>/dev/null || true
-rm -f /etc/modprobe.d/argon-webcam-audio.conf /etc/modprobe.d/argon-hardware-blacklist.conf 2>/dev/null || true
-rm -f /etc/wireplumber/wireplumber.conf.d/50-disable-internal-hdmi-audio.conf 2>/dev/null || true
-rm -f /etc/NetworkManager/conf.d/90-argon-oneup-wifi.conf 2>/dev/null || true
-rm -f /usr/bin/argon-oneup-irq-policy 2>/dev/null || true
-if [ -f /etc/argon-oneup-essentials.conf ] && [ -f /etc/argon-oneup.conf ]; then
-    rm -f /etc/argon-oneup-essentials.conf 2>/dev/null || true
-fi
-
-if [ -f /etc/default/irqbalance ] && grep -q "argon-oneup-irq-policy" /etc/default/irqbalance; then
-    sed -i '/argon-oneup-irq-policy/d' /etc/default/irqbalance 2>/dev/null || true
-    if ! is_chroot; then
-        systemctl try-restart irqbalance.service 2>/dev/null || true
-    fi
-fi
-if [ -f /etc/ddcutil/ddcutilrc ]; then
-    rm -f /etc/ddcutil/ddcutilrc 2>/dev/null || true
-    rmdir --ignore-fail-on-non-empty /etc/ddcutil 2>/dev/null || true
-fi
+cleanup_obsolete_configs
 
 if [ -n "$BOOT_CFG" ] && [ -f "$BOOT_CFG" ]; then
     remove_block
 
-    # Harmonize hardware probe directives across base config.txt
-    if [ "${DISABLE_CAMERA_PROBE:-1}" = "1" ]; then
-        sed -i 's/^[[:space:]]*camera_auto_detect=1/camera_auto_detect=0/' "$BOOT_CFG" 2>/dev/null || true
-    elif [ "${DISABLE_CAMERA_PROBE:-1}" = "0" ]; then
-        sed -i 's/^[[:space:]]*camera_auto_detect=0/camera_auto_detect=1/' "$BOOT_CFG" 2>/dev/null || true
-    fi
-
-    if [ "${DISABLE_DISPLAY_PROBE:-1}" = "1" ]; then
-        sed -i 's/^[[:space:]]*display_auto_detect=1/display_auto_detect=0/' "$BOOT_CFG" 2>/dev/null || true
-    elif [ "${DISABLE_DISPLAY_PROBE:-1}" = "0" ]; then
-        sed -i 's/^[[:space:]]*display_auto_detect=0/display_auto_detect=1/' "$BOOT_CFG" 2>/dev/null || true
-    fi
-
-    if [ "${DISABLE_UART:-1}" = "1" ]; then
-        sed -i 's/^[[:space:]]*dtparam=uart0=on/dtparam=uart0=off/' "$BOOT_CFG" 2>/dev/null || true
-    elif [ "${DISABLE_UART:-1}" = "0" ]; then
-        sed -i 's/^[[:space:]]*dtparam=uart0=off/dtparam=uart0=on/' "$BOOT_CFG" 2>/dev/null || true
-    fi
-
-    HAS_I2C_ARM=0
-    if grep -q "^[[:space:]]*dtparam=i2c_arm=on" "$BOOT_CFG" 2>/dev/null; then
-        HAS_I2C_ARM=1
-    fi
-
     {
         echo "# --- BEGIN ARGON-ONEUP-ESSENTIALS ---"
         echo "[all]"
-        if [ "$HAS_I2C_ARM" = "0" ]; then
+        if [ "${ENABLE_I2C:-1}" = "1" ]; then
             echo "dtparam=i2c_arm=on"
         fi
-        if [ "${DISABLE_CAMERA_PROBE:-1}" = "1" ]; then
-            if ! grep -q "^[[:space:]]*camera_auto_detect=0" "$BOOT_CFG" 2>/dev/null; then
-                echo "camera_auto_detect=0"
-            fi
-        fi
-        if [ "${DISABLE_DISPLAY_PROBE:-1}" = "1" ]; then
-            if ! grep -q "^[[:space:]]*display_auto_detect=0" "$BOOT_CFG" 2>/dev/null; then
-                echo "display_auto_detect=0"
-            fi
-        fi
-        if [ "${DISABLE_UART:-1}" = "1" ]; then
-            if ! grep -q "^[[:space:]]*dtparam=uart0=off" "$BOOT_CFG" 2>/dev/null; then
-                echo "dtparam=uart0=off"
-            fi
-        fi
-        if [ "${ENABLE_NVME_GEN3:-1}" = "1" ]; then
+        if [ "${ENABLE_NVME:-1}" = "1" ] || [ "${ENABLE_NVME_GEN3:-1}" = "1" ]; then
             echo "dtparam=nvme"
             echo "dtparam=pciex1_gen=3"
         fi
         if [ "${ENABLE_ANT2:-1}" = "1" ]; then
             echo "dtparam=ant2"
-        fi
-        if [ -n "$ARM_FREQ" ] && [ "$ARM_FREQ" -gt 0 ] 2>/dev/null; then
-            echo "arm_freq=${ARM_FREQ}"
         fi
         if [ "${ENABLE_FAN_CURVE:-1}" = "1" ]; then
             echo "dtparam=fan_temp0=40000"
@@ -191,23 +97,6 @@ if [ -n "$BOOT_CFG" ] && [ -f "$BOOT_CFG" ]; then
         fi
         echo "# --- END ARGON-ONEUP-ESSENTIALS ---"
     } >> "$BOOT_CFG"
-fi
-
-# Remove unrouted serial0 console from cmdline.txt when UART0 is disabled
-if [ -n "$CMDLINE_TXT" ] && [ -f "$CMDLINE_TXT" ]; then
-    if [ "${DISABLE_UART:-1}" = "1" ]; then
-        if grep -q "console=serial0" "$CMDLINE_TXT" 2>/dev/null; then
-            sed -i -E 's/(^|[[:space:]]+)console=serial0(,[0-9]+)?([[:space:]]+|$)/ /g; s/^[[:space:]]+//; s/[[:space:]]+$//' "$CMDLINE_TXT" 2>/dev/null || true
-        fi
-    fi
-fi
-
-# Suspend unpopulated eth0 PHY immediately if configured
-apply_runtime_eth
-
-# Configure PSU_MAX_CURRENT=5000, POWER_OFF_ON_HALT=1, SDRAM_BANKLOW=1 in EEPROM if supported on live hardware
-if ! is_chroot && [ -x /usr/sbin/argononeup-eepromconfig.py ] && command -v rpi-eeprom-config >/dev/null 2>&1; then
-    /usr/sbin/argononeup-eepromconfig.py >/dev/null 2>&1 || true
 fi
 
 exit 0

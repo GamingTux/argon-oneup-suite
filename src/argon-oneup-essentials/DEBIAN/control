@@ -1,16 +1,15 @@
 Package: argon-oneup-essentials
-Version: 1.3.7
+Version: 1.4.0
 Architecture: all
 Maintainer: GamingTux <gamingtux@users.noreply.github.com>
 Section: admin
 Priority: optional
 Homepage: https://github.com/GamingTux/argon-oneup-suite
-Description: Hardware tuning, antenna/NVMe & blower fan curve for Argon ONE UP laptop
- Configures essential hardware parameters for the Argon ONE UP laptop
- (Raspberry Pi Compute Module 5 / Pi 5):
+Description: Essential hardware configuration and APT repository for Argon ONE UP laptop
+ Sets up the official Argon ONE UP APT repository and ensures essential hardware
+ configuration parameters are written to /boot/firmware/config.txt:
   - External display-lid Wi-Fi/BT antenna selection (dtparam=ant2)
   - M.2 NVMe PCIe Gen 3 full-speed mode (dtparam=nvme, pciex1_gen=3)
-  - 2.8 GHz CPU boost & 4-stage quiet blower fan curve with 5C hysteresis
-  - BCM2712 PMIC halt power-off, 5A PSU limit & SDRAM 8-bank interleaving
-  - Hardware probe disables for unrouted CSI/DSI/UART0 interfaces
-  - Touchpad tap-to-click & USB audio wireplumber routing
+  - Hardware I2C bus enablement (dtparam=i2c_arm=on)
+  - 4-stage quiet blower fan curve with 5C hysteresis
+  - Official APT archive keyring and sources list
