@@ -5,6 +5,7 @@ Maintainer: GamingTux <gamingtux@users.noreply.github.com>
 Section: admin
 Priority: optional
 Provides: cm5-sd-delay-fix, cm5-sd-fix
+Depends: python3
 Homepage: https://github.com/GamingTux/argon-oneup-suite
 Description: Raspberry Pi CM5 / CM5 Lite Empty MicroSD Slot Shutdown Delay Fix
  Fixes the 30-80s shutdown/reboot hang on Raspberry Pi CM5 Lite when the
