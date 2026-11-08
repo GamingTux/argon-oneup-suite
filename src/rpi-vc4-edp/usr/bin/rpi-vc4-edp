@@ -5,8 +5,20 @@ set -e
 
 SRC_DIR="/usr/src/rpi-vc4-edp"
 OVERLAY_SRC="/usr/share/rpi-vc4-edp/overlays/argon-oneup-display.dtbo"
-CONFIG_TXT="/boot/firmware/config.txt"
-OVERLAYS_DIR="/boot/firmware/overlays"
+
+get_boot_dir() {
+    for d in /boot/firmware /boot; do
+        if [ -d "$d/overlays" ] || [ -f "$d/config.txt" ]; then
+            printf '%s\n' "$d"
+            return 0
+        fi
+    done
+    printf '/boot/firmware\n'
+}
+
+BOOT_DIR=$(get_boot_dir)
+CONFIG_TXT="${BOOT_DIR}/config.txt"
+OVERLAYS_DIR="${BOOT_DIR}/overlays"
 
 log() {
     echo "[rpi-vc4-edp] $*"
@@ -32,7 +44,6 @@ patch_kernel() {
     local kver="${1:-$(uname -r)}"
     local kbuild="/lib/modules/${kver}/build"
     local mod_dir="/lib/modules/${kver}/kernel/drivers/gpu/drm/vc4"
-    local mod_path="${mod_dir}/vc4.ko.xz"
 
     log "Checking kernel $kver for eDP-1 internal panel support..."
 
@@ -73,17 +84,45 @@ patch_kernel() {
         return 0
     fi
 
-    # 3. Backup existing module if not already backed up
+    # 3. Detect existing module format (.ko.xz, .ko.zst, .ko.gz, or .ko)
     mkdir -p "$mod_dir"
-    if [ -f "$mod_path" ] && [ ! -f "${mod_path}.orig" ]; then
-        cp -a "$mod_path" "${mod_path}.orig"
-        log "Backed up original driver to ${mod_path}.orig"
+    local existing_mod=""
+    for ext in .ko.xz .ko.zst .ko.gz .ko; do
+        if [ -f "${mod_dir}/vc4${ext}" ]; then
+            existing_mod="${mod_dir}/vc4${ext}"
+            break
+        fi
+    done
+
+    # Backup existing module if not already backed up
+    if [ -n "$existing_mod" ] && [ -f "$existing_mod" ] && [ ! -f "${existing_mod}.orig" ]; then
+        cp -a "$existing_mod" "${existing_mod}.orig"
+        log "Backed up original driver to ${existing_mod}.orig"
     fi
 
-    # 4. Compress and install
-    log "Installing patched vc4.ko.xz to $mod_path..."
-    xz -T0 -c "${SRC_DIR}/vc4.ko" > "$mod_path"
-    chmod 0644 "$mod_path"
+    # 4. Compress and install matching target format
+    local target_mod="${existing_mod:-${mod_dir}/vc4.ko.xz}"
+    log "Installing patched vc4 driver to $target_mod..."
+    case "$target_mod" in
+        *.zst)
+            if command -v zstd >/dev/null 2>&1; then
+                zstd -q -f -o "$target_mod" "${SRC_DIR}/vc4.ko"
+            else
+                xz -T0 -c "${SRC_DIR}/vc4.ko" > "${mod_dir}/vc4.ko.xz"
+                target_mod="${mod_dir}/vc4.ko.xz"
+            fi
+            ;;
+        *.gz)
+            gzip -c "${SRC_DIR}/vc4.ko" > "$target_mod"
+            ;;
+        *.xz)
+            xz -T0 -c "${SRC_DIR}/vc4.ko" > "$target_mod"
+            ;;
+        *)
+            cp -f "${SRC_DIR}/vc4.ko" "$target_mod"
+            ;;
+    esac
+    chmod 0644 "$target_mod"
 
     # Clean temporary build artifacts
     make -C "$kbuild" M="$SRC_DIR" clean >/dev/null 2>&1 || true
@@ -105,11 +144,18 @@ patch_kernel() {
 restore_kernel() {
     local kver="${1:-$(uname -r)}"
     local mod_dir="/lib/modules/${kver}/kernel/drivers/gpu/drm/vc4"
-    local mod_path="${mod_dir}/vc4.ko.xz"
 
-    if [ -f "${mod_path}.orig" ]; then
-        log "Restoring original vc4.ko.xz for kernel $kver..."
-        mv -f "${mod_path}.orig" "$mod_path"
+    local restored=0
+    for orig in "${mod_dir}"/vc4.ko*.orig; do
+        if [ -f "$orig" ]; then
+            local target="${orig%.orig}"
+            log "Restoring original $(basename "$target") for kernel $kver..."
+            mv -f "$orig" "$target"
+            restored=1
+        fi
+    done
+
+    if [ "$restored" -eq 1 ]; then
         depmod -a "$kver" 2>/dev/null || true
         if command -v update-initramfs >/dev/null 2>&1; then
             update-initramfs -u -k "$kver" >/dev/null 2>&1 || true
@@ -145,8 +191,8 @@ show_status() {
 
     local kver
     kver=$(uname -r)
-    local mod_path="/lib/modules/${kver}/kernel/drivers/gpu/drm/vc4/vc4.ko.xz"
-    if [ -f "${mod_path}.orig" ]; then
+    local mod_dir="/lib/modules/${kver}/kernel/drivers/gpu/drm/vc4"
+    if ls "${mod_dir}"/vc4.ko*.orig >/dev/null 2>&1; then
         echo "Driver Status:     Patched (Backup .orig exists)"
     else
         echo "Driver Status:     Standard / Unmodified"

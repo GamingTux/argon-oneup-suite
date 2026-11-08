@@ -15,6 +15,7 @@ import shutil
 import struct
 import tempfile
 import argparse
+import subprocess
 
 OLD_FREQS = struct.pack("<IIII", 400000, 300000, 200000, 100000)
 NEW_FREQS = struct.pack("<IIII", 400000, 400000, 400000, 400000)
@@ -30,19 +31,27 @@ def read_kernel_raw(path):
         with open(path, "rb") as f:
             raw = f.read()
         if raw[:2] == b"\x1f\x8b":
-            return gzip.decompress(raw), True
-        return raw, False
+            return gzip.decompress(raw), "gzip"
+        if raw[:4] == b"\x28\xb5\x2f\xfd":
+            try:
+                proc = subprocess.run(["zstd", "-d", "-c"], input=raw, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, check=True)
+                return proc.stdout, "zstd"
+            except Exception:
+                pass
+        return raw, "raw"
     except Exception:
-        return None, False
+        return None, "error"
 
-def write_kernel_raw(path, data, is_gzipped):
+def write_kernel_raw(path, data, comp_type):
     dir_name = os.path.dirname(path)
     fd, tmp = tempfile.mkstemp(dir=dir_name, prefix=".kpatch-")
     try:
         with os.fdopen(fd, "wb") as raw_fp:
-            if is_gzipped:
+            if comp_type == "gzip":
                 with gzip.GzipFile(filename="", mode="wb", fileobj=raw_fp, compresslevel=6, mtime=0) as gz_fp:
                     gz_fp.write(data)
+            elif comp_type == "zstd":
+                subprocess.run(["zstd", "-q", "-c"], input=data, stdout=raw_fp, check=True)
             else:
                 raw_fp.write(data)
             raw_fp.flush()
@@ -68,27 +77,27 @@ def write_kernel_raw(path, data, is_gzipped):
         return False
 
 def patch_kernel(path):
-    data, is_gz = read_kernel_raw(path)
-    if data is None:
+    data, comp_type = read_kernel_raw(path)
+    if data is None or comp_type == "error":
         return "READ_ERROR"
     if NEW_FREQS in data:
         return "ALREADY_PATCHED"
     if data.count(OLD_FREQS) == 1:
         patched = data.replace(OLD_FREQS, NEW_FREQS, 1)
-        if write_kernel_raw(path, patched, is_gz):
+        if write_kernel_raw(path, patched, comp_type):
             return "PATCHED"
         return "WRITE_ERROR"
     return "PATTERN_NOT_FOUND"
 
 def restore_kernel(path):
-    data, is_gz = read_kernel_raw(path)
-    if data is None:
+    data, comp_type = read_kernel_raw(path)
+    if data is None or comp_type == "error":
         return "READ_ERROR"
     if OLD_FREQS in data:
         return "ALREADY_ORIGINAL"
     if data.count(NEW_FREQS) == 1:
         restored = data.replace(NEW_FREQS, OLD_FREQS, 1)
-        if write_kernel_raw(path, restored, is_gz):
+        if write_kernel_raw(path, restored, comp_type):
             return "RESTORED"
         return "WRITE_ERROR"
     return "PATTERN_NOT_FOUND"
