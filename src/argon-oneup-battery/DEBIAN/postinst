@@ -22,7 +22,11 @@ if [ -n "$BOOT_DIR" ]; then
                 printf '\n[all]\n' >> "$CONFIG"
             fi
         fi
-        if ! grep -q "^[[:space:]]*dtparam=i2c_arm=on" "$CONFIG"; then
+        # Ensure dtparam=i2c_arm=on is active (uncomment if commented out, or add under [all])
+        if grep -q "^[[:space:]]*#*[[:space:]]*dtparam=i2c_arm=" "$CONFIG"; then
+            sed -i 's/^[[:space:]]*#*[[:space:]]*dtparam=i2c_arm=.*/dtparam=i2c_arm=on/' "$CONFIG"
+            echo "[argon-oneup-battery] Activated dtparam=i2c_arm=on in $CONFIG"
+        else
             echo "dtparam=i2c_arm=on" >> "$CONFIG"
             echo "[argon-oneup-battery] Enabled dtparam=i2c_arm=on in $CONFIG"
         fi

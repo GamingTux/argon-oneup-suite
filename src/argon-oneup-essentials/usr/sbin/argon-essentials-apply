@@ -68,6 +68,11 @@ if [ -n "$BOOT_CFG" ] && [ -f "$BOOT_CFG" ]; then
     # Disable obsolete dtparam=audio=on outside the block (no headphone DAC on Pi 5 / CM5)
     sed -i 's/^[[:space:]]*dtparam=audio=on/#dtparam=audio=on (obsolete on Pi 5\/CM5)/' "$BOOT_CFG" 2>/dev/null || true
 
+    # Ensure dtparam=i2c_arm=on is enabled outside the block as well
+    if [ "${ENABLE_I2C:-1}" = "1" ]; then
+        sed -i 's/^[[:space:]]*#*[[:space:]]*dtparam=i2c_arm=.*/dtparam=i2c_arm=on/' "$BOOT_CFG" 2>/dev/null || true
+    fi
+
     # If FAST_BOOT_NO_PROBES is enabled, comment out base camera_auto_detect and display_auto_detect outside our block
     if [ "${FAST_BOOT_NO_PROBES:-1}" = "1" ]; then
         sed -i 's/^[[:space:]]*camera_auto_detect=1/#camera_auto_detect=1 (handled by argon-oneup-essentials)/' "$BOOT_CFG" 2>/dev/null || true

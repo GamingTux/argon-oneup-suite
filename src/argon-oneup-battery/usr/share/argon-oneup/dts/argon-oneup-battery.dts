@@ -7,6 +7,7 @@
 	fragment@0 {
 		target = <&i2c1>;
 		__overlay__ {
+			status = "okay";
 			#address-cells = <1>;
 			#size-cells = <0>;
 
