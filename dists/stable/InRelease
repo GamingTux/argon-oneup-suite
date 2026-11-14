@@ -1,0 +1,51 @@
+-----BEGIN PGP SIGNED MESSAGE-----
+Hash: SHA512
+
+Architectures: all arm64
+Codename: stable
+Components: main
+Date: Sat, 14 Nov 2026 11:16:45 +0000
+Description: Argon ONE UP Debian Package Repository
+Label: Argon ONE UP Suite
+Origin: Argon ONE UP
+Suite: stable
+MD5Sum:
+ a9d1dc950357df2242458afb3fcccf23              210 Release
+ 9e9854a2f556e4529fa9a5b424a127d1            13570 main/binary-all/Packages
+ 09f45af4c3a9f3e7cd68033a5f70ffe3             4997 main/binary-all/Packages.gz
+ 0f357868841978914926340881d83714            16675 main/binary-arm64/Packages
+ 794560ab8aec6b6e1a39735c32a6f64f             6008 main/binary-arm64/Packages.gz
+SHA1:
+ 75d416a7472c271a249f5faaf5137a8143f6c159              210 Release
+ 74167dac49218aa788da75a29dd733a1f4129d8a            13570 main/binary-all/Packages
+ bb840e0fe17f24f987f202952bd702f6029eace1             4997 main/binary-all/Packages.gz
+ 99ed41a08c06a46132ba46c03b725996e82e7dec            16675 main/binary-arm64/Packages
+ 6fae59e022d60c2a3f32ad1b2358e058afa9e448             6008 main/binary-arm64/Packages.gz
+SHA256:
+ b1d1f9b1f381f30a6dd802f23c2b2398d1984523eb7aa5b4da3464eb5c7f6a62              210 Release
+ dfb66b0f84d0d0418a31e7316025ca5bbe942bb402f79cce0f6432f83541788e            13570 main/binary-all/Packages
+ 79be11e72491da4779722df59d0c06d309c5d53f936fd9bea62fba56cbc03250             4997 main/binary-all/Packages.gz
+ c7b541b718e05a1a82650f85801550bbfc947fb98d9a0e33e5aaa405c7963758            16675 main/binary-arm64/Packages
+ b1085dd73a71c40f16b14ffec1db391aca7b8e7279c0899d6a9965b3a3e54f8b             6008 main/binary-arm64/Packages.gz
+SHA512:
+ f25427a64f5610137b8804566876322200176cd35e3334f0d6d60d82e431c9318c38082fbade927a646748d547ba6e0f6b0770ce006b8a09aafc12c8af83eb47              210 Release
+ 2be7f77cb1d2ce440393953b3b5817c1d975f6a7b7a160e1fb317e8bff30757a6dc2636a9e5c83ebf828a4dd36e2f5d697af17496825b1a93393f5210e75f1f4            13570 main/binary-all/Packages
+ d243952a21e3cd0de42a6ecf3be55da1f3c6668ee768a214261c88abce768641c46fdc79bec0a469c7c6768426e004c917c948b4ff96b3fd4dc15b182681e0ec             4997 main/binary-all/Packages.gz
+ c278b8ea633e0f073b4ab7bad879d013f35d26c74ab631cf73c1c6cc990acdafbd93c1e6123031b8881109b2e1f2f306a54871fc097287d06c71b62cdc4f1750            16675 main/binary-arm64/Packages
+ 90ce13a025b3e139f183fc6aef59ac86616033c4da0f7c28888069dfa2a5bdef8c8a056c0c69aaa2a9dab14b796dcf7738cb98ac97e5bab774477a6eb5c2bc5b             6008 main/binary-arm64/Packages.gz
+-----BEGIN PGP SIGNATURE-----
+
+iQIzBAEBCgAdFiEEuCigaz6dtftggeta8UClVzYTejUFAmr4Qx0ACgkQ8UClVzYT
+ejUnaw//VPpkUDzn51DjJo6hjZj0FlROpqoAgO0Ao/4qTZ3gsLtSXi+b3trzD+vY
+3Pu61WmUQdPFOpSxPwR46KrtZu7ko6+U2WxXvH0q537WRdQxLTXuHuZbsfno00yW
+FebIfZwrFEAEA/jQDli2veJcwb93Iit4/fCYj1cK2UCE9D4tUEh6e4AiQUY3iNuv
+ip6pJb7QxBuvOABAAmquG6FBZZdeLT6ET92AP+PQiHVhO7TwNi2rBnZQVyIUeWGM
+M8TBlhUTwsnjLZkclVlz64Bi+EkJpTfUVcCLjnq+M7zwuSWtNKEQmiNCOyE+FNpL
+K5shm8ytXotulAeJM3/4K6JMdWA5hwWf23f1PovLy/s8PYIO5+5N1m4z6Wy61qbW
+43jX0+1BSrYHMuBWwrzVgRwhp/YQTCGurkIWrpmGEgWGpJW2LTlxS4M5wNV2LeP2
+SJDkVpBtIPR6Nb26PKTvnEE9718QCpKEATIIOS359Uw9mJlBBtuKi+BhLXhPYz/x
+tT8jA6S5KeAeHHK/a+86hBxZwTfIE04QrsuF02LDRWSIYXlzTFG0IFJJias+L9bB
+A0asgcyu0c8taq30tqETi0KvaQs89tS7c1mKoqZGgj3e42tAfxoDDQMpxK+zWM6Q
+x43R8dFAv8C6BgpEpHu+/ypnMBlokIIoW5KZE0jz2GASMFHW0d0=
+=/tmK
+-----END PGP SIGNATURE-----
