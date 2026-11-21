@@ -1,0 +1,336 @@
+Package: argon-oneup-backlight
+Version: 1.3.11+git110.3966081
+Architecture: all
+Maintainer: GamingTux <gamingtux@users.noreply.github.com>
+Depends: ddcci-dkms (>= 0.4.5), linux-headers-rpi-2712 | linux-headers-raspi | linux-headers-arm64 | linux-headers-rpi-v8 | linux-headers-generic
+Suggests: brightnessctl
+Filename: pool/main/argon-oneup-backlight_1.3.11+git110.3966081_all.deb
+Size: 2958
+MD5sum: 23655578d07efc9985c8c70bb7621b52
+SHA1: 5b95e99f11812a7a165504ee1b8ceb6f7f06d442
+SHA256: 74dd26980450dd8653d1a1eee68015a9dae3e493da99a700b184f7ea866e541d
+Section: misc
+Priority: optional
+Homepage: https://github.com/GamingTux/argon-oneup-suite
+Description: Standard Linux Backlight Driver Integration for Argon ONE UP
+ Bridges the internal DDC/CI display on eDP-1 / HDMI-A-2 (I2C bus 14) to the standard
+ Linux /sys/class/backlight subsystem, providing universal hardware
+ brightness keys, slider, and OSD support across all desktop environments
+ (KDE Plasma, Raspberry Pi OS Labwc/Wayfire, GNOME, XFCE, etc.).
+
+Package: argon-oneup-battery
+Version: 1.3.6+git110.3966081
+Architecture: all
+Maintainer: GamingTux <gamingtux@users.noreply.github.com>
+Depends: dkms, make, device-tree-compiler, i2c-tools, linux-headers-rpi-2712 | linux-headers-raspi | linux-headers-arm64 | linux-headers-rpi-v8 | linux-headers-generic
+Recommends: lm-sensors
+Filename: pool/main/argon-oneup-battery_1.3.6+git110.3966081_all.deb
+Size: 18626
+MD5sum: 83930389b49ef9b3d1cce46d560ecaa5
+SHA1: 4b4a999d7003791fc556d9f182780880a413e8fd
+SHA256: fe0665af745eb2c3f15224f9a3ff5e1ea0231b92043d168b3515b6a110683842
+Section: hardware
+Priority: optional
+Homepage: https://github.com/GamingTux/argon-oneup-suite
+Description: Argon ONE UP Laptop Battery & Power Management Driver
+ Native Linux kernel power_supply driver for the Argon ONE UP
+ Raspberry Pi CM5 laptop battery management IC (0x64).
+ Exposes BAT0 (percentage, voltage, current, power, temperature,
+ cycle count, health, dynamic battery runtime) and AC0 (online status)
+ to the desktop environment (UPower, systemd-logind, desktop panels).
+ Includes DKMS automatic build, Device Tree overlay, and config.txt auto-configuration.
+
+Package: argon-oneup-essentials
+Version: 1.4.2+git110.3966081
+Architecture: all
+Maintainer: GamingTux <gamingtux@users.noreply.github.com>
+Filename: pool/main/argon-oneup-essentials_1.4.2+git110.3966081_all.deb
+Size: 7216
+MD5sum: 1b0948efe9996747e387c15fbedf5ac4
+SHA1: ab54ce57968ca7cbc5d4aad79549e30a936d3b06
+SHA256: 8b8d298db33ee588d0957532b3474dab3f64de12812dc9866b030de0d4ae5308
+Section: admin
+Priority: optional
+Homepage: https://github.com/GamingTux/argon-oneup-suite
+Description: Essential hardware configuration and APT repository for Argon ONE UP laptop
+ Sets up the official Argon ONE UP APT repository and ensures essential hardware
+ configuration parameters are written to /boot/firmware/config.txt:
+  - External display-lid Wi-Fi/BT antenna selection (dtparam=ant2)
+  - M.2 NVMe PCIe Gen 3 full-speed mode (dtparam=nvme, pciex1_gen=3)
+  - Hardware I2C bus enablement (dtparam=i2c_arm=on)
+  - 4-stage quiet blower fan curve with 5C hysteresis
+  - Webcam audio endpoint quirk (eliminates 1.5s boot hang)
+  - Disables dummy CSI camera nodes (pisp_be) & silent internal HDMI audio sink
+  - Power saving standby for unused onboard CM5 Gigabit Ethernet PHY
+  - Official APT archive keyring and sources list
+
+Package: argon-oneup-lid
+Version: 1.3.4+git110.3966081
+Architecture: all
+Maintainer: GamingTux <gamingtux@users.noreply.github.com>
+Recommends: raspi-utils-dt | raspberrypi-utils
+Filename: pool/main/argon-oneup-lid_1.3.4+git110.3966081_all.deb
+Size: 2412
+MD5sum: 65ca5b665f0a6612de208b6ec3ad50e7
+SHA1: c64ec4033893c9c8424992a5a26e725792d618a6
+SHA256: bbedcd37c931f3169c50d231e8ed8ef9e15bf72c1167e06efbbf8fb61e7f2adc
+Section: hardware
+Priority: optional
+Homepage: https://github.com/GamingTux/argon-oneup-suite
+Description: Argon ONE UP Laptop Hardware Lid Switch Integration
+ Integrates the physical Hall-effect magnetic lid switch on GPIO 27
+ into the standard Linux input subsystem (EV_SW, SW_LID) via a Device Tree Overlay.
+ Automatically configures config.txt and activates the overlay at runtime.
+
+Package: argon-oneup-plasma-widget
+Version: 1.3.4+git110.3966081
+Architecture: arm64
+Maintainer: GamingTux <gamingtux@users.noreply.github.com>
+Depends: plasma-desktop
+Recommends: argon-oneup-power-profiles (>= 1.3.4) | argon-power-profiles, argon-oneup-battery (>= 1.3.4)
+Filename: pool/main/argon-oneup-plasma-widget_1.3.4+git110.3966081_arm64.deb
+Size: 60166
+MD5sum: 31c238cce557f6c9b60efa4e2535fe8c
+SHA1: c95908f809092b98f0f1a6ca715285f7bee7632a
+SHA256: 6717398dcc70b640d6ac258e8c4d99b13f091c0e16f2e7e765edc6be3152bd4f
+Section: kde
+Priority: optional
+Homepage: https://github.com/GamingTux/argon-oneup-suite
+Description: Argon ONE UP Dashboard Plasmoid for KDE Plasma 6
+ A custom, sleek desktop dashboard widget designed specifically for the
+ Argon ONE UP laptop running KDE Plasma. Provides real-time hardware telemetry:
+ per-core CPU clock, SoC temperature, CW2217 battery statistics (wattage, voltage,
+ health, cycle count), NVMe SSD temp, PWM fan state, and one-click power profile switching.
+ Uses a compiled Cortex-A76 telemetry probe (0.4ms) with zero idle CPU overhead.
+
+Package: argon-oneup-power-profiles
+Version: 1.3.4+git110.3966081
+Architecture: all
+Maintainer: GamingTux <gamingtux@users.noreply.github.com>
+Depends: python3, python3-dbus, python3-gi, iw, systemd
+Conflicts: power-profiles-daemon, rpi-power-profiles, argon-power-profiles (<< 1.3.4+git110.3966081)
+Replaces: power-profiles-daemon, rpi-power-profiles, argon-power-profiles (<< 1.3.4+git110.3966081)
+Provides: power-profiles-daemon, rpi-power-profiles, argon-power-profiles (= 1.3.4+git110.3966081)
+Filename: pool/main/argon-oneup-power-profiles_1.3.4+git110.3966081_all.deb
+Size: 8898
+MD5sum: 494737fe5c1f6337f3429c6fb237a5fd
+SHA1: 9a46e889c4b94305cf0b5eb733e03224b3fc7736
+SHA256: 9d75d9b7f1e5298facc902c20a9a9fcfc8c8bab08e9911f2162751bd4a31b5f5
+Section: admin
+Priority: optional
+Homepage: https://github.com/GamingTux/argon-oneup-suite
+Description: Hardware Power Profiles Daemon for Argon ONE UP Laptop
+ Drop-in replacement for power-profiles-daemon on the Argon ONE UP Laptop
+ (Raspberry Pi Compute Module 5) where ACPI platform drivers are absent.
+ Exports standard org.freedesktop.UPower.PowerProfiles and net.hadess.PowerProfiles
+ D-Bus APIs for KDE Plasma, GNOME, and powerprofilesctl.
+ Dynamically manages:
+  - CPU Governors (powersave @ 1500MHz, schedutil 1ms dynamic, performance @ max freq)
+  - PCIe ASPM & Kernel Workqueue Power Efficiency per profile
+  - WiFi Power Saving (powersave on / off)
+  - Display Backlight with per-profile memory and automatic restore
+
+Package: argon-oneup-sensors
+Version: 1.3.4+git110.3966081
+Architecture: all
+Maintainer: GamingTux <gamingtux@users.noreply.github.com>
+Recommends: lm-sensors
+Filename: pool/main/argon-oneup-sensors_1.3.4+git110.3966081_all.deb
+Size: 1502
+MD5sum: ade82c77c509929e0410664bd5952b46
+SHA1: b674101a93b663124d392fc6c79bad2377b5b01a
+SHA256: 777b1255bf446534f61a404882685496547cd35948f71c39d644d23a777a8181
+Section: utils
+Priority: optional
+Homepage: https://github.com/GamingTux/argon-oneup-suite
+Description: Argon ONE UP & Raspberry Pi CM5 Hardware Sensors Mapping
+ Routes and aliases physical hardware sensors (CPU thermal, PWM fan RPM,
+ NVMe SSD temperature, CW2217 battery telemetry) via standard lm-sensors
+ configuration (/etc/sensors.d/argon-oneup.conf).
+ Compatible with all desktop environments, window managers, and servers.
+
+Package: argon-oneup-suite
+Version: 1.4.4+git110.3966081
+Architecture: all
+Maintainer: GamingTux <gamingtux@users.noreply.github.com>
+Depends: argon-oneup-essentials (>= 1.4.1), argon-oneup-backlight (>= 1.3.4), argon-oneup-battery (>= 1.3.4), argon-oneup-lid (>= 1.3.4), argon-oneup-sensors (>= 1.3.4), argon-oneup-power-profiles (>= 1.3.4) | rpi-power-profiles (>= 1.0.0), argon-oneup-suspend (>= 1.3.4), rpi-suspend (>= 1.5.0), rpi-vc4-edp (>= 1.1.1), cm5-mmc-fix (>= 1.3.4)
+Suggests: argon-oneup-plasma-widget (>= 1.3.4), ksystemstats-rpi5-fix (>= 1.3.4), rpi-pishutdown (>= 1.3.4), argon-wfplug-batt (>= 1.3.4)
+Filename: pool/main/argon-oneup-suite_1.4.4+git110.3966081_all.deb
+Size: 1130
+MD5sum: 6df5cd0c4d70f9f00ccdb9dc1607947e
+SHA1: 9fd9725514c01d0dbc9191ed81f83ab1fb64f95a
+SHA256: eff152efec569f9ebf17c064d025cde6623e77c99e01fc100e2419c6b99a4d2e
+Section: metapackages
+Priority: optional
+Homepage: https://github.com/GamingTux/argon-oneup-suite
+Description: Complete hardware support suite for Argon ONE UP laptop
+ Metapackage that installs all core hardware drivers, services, and utilities for the
+ Argon ONE UP laptop (based on Raspberry Pi 5 / Compute Module 5).
+ Includes hardware essentials (antenna, NVMe Gen 3, blower fan curve, I2C, APT repo),
+ battery telemetry (CW2217), DDC/CI display backlight, magnetic lid switch,
+ power profiles daemon, standard lm-sensors hardware configuration,
+ rpi-suspend userspace sleep/standby manager, rpi-vc4-edp display patcher, and
+ cm5-mmc-fix empty microSD slot shutdown fix.
+ Fully system-agnostic: works across all Linux distributions and desktop environments.
+ Optional extensions (KDE widgets and Pi OS dialogs)
+ are available as separate packages in extras.
+
+Package: argon-oneup-suspend
+Version: 1.3.4+git110.3966081
+Architecture: all
+Maintainer: GamingTux <gamingtux@users.noreply.github.com>
+Depends: rpi-suspend (>= 1.5.0)
+Recommends: argon-oneup-lid (>= 1.3.4), argon-oneup-backlight (>= 1.3.4), argon-oneup-battery (>= 1.3.4)
+Suggests: rpi-pishutdown (>= 1.3.4)
+Filename: pool/main/argon-oneup-suspend_1.3.4+git110.3966081_all.deb
+Size: 2062
+MD5sum: 0749b0843310c4539bafcbf6e5f2c8da
+SHA1: 30e77c7a671f6c33307703e83ce860527c76f76f
+SHA256: 91fe9e959366034ae6e27df2fd8eee75c12c6e3127dabeaa200d504317792652
+Section: admin
+Priority: optional
+Homepage: https://github.com/GamingTux/argon-oneup-suite
+Description: Argon ONE UP Sleep, Standby & Clamshell Configuration
+ Configures and activates the Argon ONE UP laptop hardware profile for rpi-suspend:
+  - Selects argon-oneup hardware profile in /etc/rpi-suspend.conf.d/
+  - Internal eDP-1 display clamshell blanking & instant resume
+  - Keyboard & LED power cut on USB ports 6 & 7 during sleep
+  - Preserves TRRS 3.5mm headset combo jack button
+  - Enables lid wakeup and low-power sleep hooks
+
+Package: argon-wfplug-batt
+Version: 1.3.4+git110.3966081
+Architecture: arm64
+Maintainer: GamingTux <gamingtux@users.noreply.github.com>
+Depends: wf-panel-pi, wfplug-batt
+Filename: pool/main/argon-wfplug-batt_1.3.4+git110.3966081_arm64.deb
+Size: 19576
+MD5sum: 2e7fea7fa71af075ac03ac496b850db1
+SHA1: cdce2d5514f6678ad76df126eb0979edb970478c
+SHA256: de7208f9f571ce72b8a1a77120baa966397eb97fc5c2196cd26e426586ec75a7
+Section: x11
+Priority: optional
+Homepage: https://github.com/GamingTux/argon-oneup-suite
+Description: Enhanced Battery Telemetry Widget for Raspberry Pi OS (wf-panel-pi)
+ Drop-in replacement for the standard wf-panel-pi battery plugin (libbatt.so)
+ on Raspberry Pi OS (rpd-labwc / Wayfire).
+ Dynamically reads and displays all available Linux /sys/class/power_supply/BAT*
+ telemetry attributes on mouseover in a structured order (status, remaining
+ runtime, power in Watts, current in Amps, voltage + design bounds, capacity
+ in Wh/mAh, health %, cycle count, temperature, and battery model/technology),
+ automatically hiding any unsupported fields. Also fixes upstream Cairo surface
+ memory leaks.
+
+Package: cm5-mmc-fix
+Version: 1.3.4+git110.3966081
+Architecture: all
+Maintainer: GamingTux <gamingtux@users.noreply.github.com>
+Depends: python3
+Provides: cm5-sd-delay-fix, cm5-sd-fix
+Filename: pool/main/cm5-mmc-fix_1.3.4+git110.3966081_all.deb
+Size: 4640
+MD5sum: 60abe50dd676803f5134b5a4cd4e0b84
+SHA1: 1514a40b33987a7597c21bfde448497175b5cc57
+SHA256: 339c3d04af1b0909b13f2530c66348500dbac46e811b23dff02ff2a48488ec19
+Section: admin
+Priority: optional
+Homepage: https://github.com/GamingTux/argon-oneup-suite
+Description: Raspberry Pi CM5 / CM5 Lite Empty MicroSD Slot Shutdown Delay Fix
+ Fixes the 30-80s shutdown/reboot hang on Raspberry Pi CM5 Lite when the
+ microSD slot is empty.
+ Patches the BCM2712 SDHCI 100kHz hardware timeout bug in mmc_rescan freqs[],
+ installs cm5-sdcard-fast device-tree overlay to bypass SDIO/eMMC probes, and
+ registers an automatic kernel postinst hook to persist across all apt upgrades.
+ Keeps microSD hotplugging and booting 100% intact.
+
+Package: ksystemstats-rpi5-fix
+Version: 1.3.4+git110.3966081
+Architecture: arm64
+Maintainer: GamingTux <gamingtux@users.noreply.github.com>
+Depends: libcap2-bin, bash
+Recommends: plasma-systemmonitor, ksystemstats
+Provides: rpi5-kde-sensors-fix
+Filename: pool/main/ksystemstats-rpi5-fix_1.3.4+git110.3966081_arm64.deb
+Size: 7296
+MD5sum: 932c57071aaac75aadec763dcf537aa8
+SHA1: 7495df2231b58aa4059df4a4c0f225a5ead8c467
+SHA256: 065054389ff436715bac9222f0bdd606a4d6cd6d5583f24feb34ed4e689f851b
+Section: kde
+Priority: optional
+Homepage: https://github.com/GamingTux/argon-oneup-suite
+Description: KDE Plasma 6 Systemmonitor ksystemstats Fix for Raspberry Pi 5 / CM5
+ Fixes KDE Plasma 6 Systemmonitor ksystemstats ARM64 /proc/cpuinfo deadlock
+ (KDE Bug #493093) via private mount namespace and maps cpu_thermal to CPU cards.
+ Includes ksystemstats-ns-helper binary, cpuinfo generator, and systemd service override.
+
+Package: rpi-pishutdown
+Version: 1.3.4+git110.3966081
+Architecture: all
+Maintainer: GamingTux <gamingtux@users.noreply.github.com>
+Depends: python3, python3-gi, gir1.2-gtk-3.0
+Recommends: rpi-suspend
+Filename: pool/main/rpi-pishutdown_1.3.4+git110.3966081_all.deb
+Size: 3172
+MD5sum: c8abb10367c3171eed7085d18d682a4a
+SHA1: 9b89808a23d27bea254757f0b9ea9aea6b88d2ae
+SHA256: 50199d21c75110dd6fdf51a0b824ea6ed63445cd6725cff8854f9b0799617fc0
+Section: x11
+Priority: optional
+Homepage: https://github.com/GamingTux/argon-oneup-suite
+Description: Standby-enabled Shutdown Dialog for Raspberry Pi OS (Labwc / LXDE)
+ Drop-in replacement for /usr/bin/pishutdown on Raspberry Pi OS.
+ Adds a "Standby (Ruhezustand)" button that interfaces with systemd-suspend
+ and rpi-suspend for low-power sleep mode.
+ Diverts the original /usr/bin/pishutdown safely using dpkg-divert.
+
+Package: rpi-suspend
+Version: 1.6.0
+Architecture: all
+Maintainer: GamingTux <gamingtux@users.noreply.github.com>
+Depends: python3, systemd
+Recommends: iw, rfkill
+Suggests: rpi-pishutdown
+Conflicts: rpi-fake-sleep
+Replaces: rpi-fake-sleep
+Provides: rpi-fake-sleep
+Filename: pool/main/rpi-suspend_1.6.0_all.deb
+Size: 21506
+MD5sum: ad7eb466686efafe80e75591540280be
+SHA1: b1f55320e295b414bc321c4b76136527a6a2cc27
+SHA256: 6849f167bc2d28478a698ed0df39e6bb96950918aa97d3f59384355b4e6e4271
+Section: admin
+Priority: optional
+Homepage: https://github.com/GamingTux/rpi-suspend
+Description: Universal Userspace Suspend, Standby & Clamshell Manager for Raspberry Pi
+ Enables native low-power sleep, standby, and laptop clamshell mode on
+ Raspberry Pi 4 / 5 & CM4 / CM5 systems where platform firmware lacks
+ ACPI S3 or hardware s2idle support.
+ .
+ Features:
+  - Seamless systemd-suspend & desktop environment integration (KDE, GNOME, Wayfire, Labwc, XFCE)
+  - Cgroups v2 process freezing & single-core CPU parking (C1-C3 in hardware WFI)
+  - Universal DRM DPMS & backlight blanking across Wayland and X11
+  - Instant <1ms interrupt wakeup via keyboard, mouse, power button, or lid switch
+  - Docked Clamshell Mode (turns off internal laptop display & keyboard when docked to an external monitor)
+  - Modular hardware profile system (generic, argon-oneup, uconsole, devterm, crowview, pitop4)
+  - Extensible drop-in configs (/etc/rpi-suspend.conf.d/) & hook scripts (/etc/rpi-suspend/hooks.d/)
+
+Package: rpi-vc4-edp
+Version: 1.1.1+git110.3966081
+Architecture: all
+Maintainer: GamingTux <gamingtux@users.noreply.github.com>
+Depends: bash, xz-utils, make, build-essential, linux-headers-rpi-2712 | linux-headers-raspi | linux-headers-arm64 | linux-headers-rpi-v8 | linux-headers-generic
+Filename: pool/main/rpi-vc4-edp_1.1.1+git110.3966081_all.deb
+Size: 160760
+MD5sum: 91209b1d20caa4bfd511375862b95fdb
+SHA1: df6bbf6766b09c51c5e56879e67073c84fb968de
+SHA256: 095164dc46175c35a405c654004ab136eb0c798c9e344e1dd1c114b1e790b8b8
+Section: kernel
+Priority: optional
+Homepage: https://github.com/GamingTux/argon-oneup-suite
+Description: Automatic Kernel eDP Patcher for Raspberry Pi CM4 / CM5 Laptops
+ Automatically builds and patches the vc4 DRM kernel module on every kernel
+ upgrade to expose internal HDMI laptop panels as eDP-1. Enables native
+ clamshell standby, instant wake, and desktop lid management. Auto-retires
+ once upstream kernel PR #7732 is merged and released.
+

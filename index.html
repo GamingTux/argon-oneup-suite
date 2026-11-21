@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Argon ONE UP APT Repository</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; max-width: 800px; margin: 40px auto; padding: 0 20px; line-height: 1.6; color: #333; background: #fdfdfd; }
+    h1 { color: #111; border-bottom: 2px solid #00e5ff; padding-bottom: 10px; }
+    code, pre { background: #f4f4f4; border-radius: 4px; padding: 2px 6px; font-family: "JetBrains Mono", Consolas, monospace; }
+    pre { padding: 15px; overflow-x: auto; border-left: 4px solid #00e5ff; }
+    .badge { display: inline-block; background: #00e5ff; color: #000; font-weight: bold; padding: 2px 8px; border-radius: 3px; font-size: 0.85em; }
+  </style>
+</head>
+<body>
+  <h1>⚡ Argon ONE UP Debian / APT Repository</h1>
+  <p><span class="badge">Official</span> Hardware driver and power management suite repository for the <strong>Argon ONE UP</strong> Raspberry Pi CM5 laptop.</p>
+  
+  <h2>📦 Automated Installation via Essentials</h2>
+  <p>Installing <code>argon-oneup-essentials</code> automatically configures this repository and its GPG keyring.</p>
+
+  <h2>🔧 Manual Repository Setup</h2>
+  <p>To manually add this repository to any Debian / Raspberry Pi OS / Ubuntu system:</p>
+  <pre><code># 1. Download and install the GPG signing key
+sudo mkdir -p /usr/share/keyrings
+curl -fsSL https://gamingtux.github.io/argon-oneup-suite/argon-oneup-archive-keyring.gpg | sudo tee /usr/share/keyrings/argon-oneup-archive-keyring.gpg > /dev/null
+
+# 2. Add the repository sources list
+sudo tee /etc/apt/sources.list.d/argon-oneup.sources &lt;&lt; 'EOF'
+Types: deb
+URIs: https://gamingtux.github.io/argon-oneup-suite/
+Suites: stable
+Components: main
+Signed-By: /usr/share/keyrings/argon-oneup-archive-keyring.gpg
+EOF
+
+# 3. Update APT and install the suite
+sudo apt update
+sudo apt install argon-oneup-suite</code></pre>
+</body>
+</html>
